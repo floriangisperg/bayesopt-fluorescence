@@ -2,43 +2,48 @@
 
 Welcome to the hands-on Bayesian Optimization workshop!
 
-## Before You Start
+---
 
-### 1. Install Anaconda (if not already installed)
+## Installation
 
-Download from: https://www.anaconda.com/download
+**Prerequisite:** Anaconda or Miniconda must be installed.
+- Download from: https://docs.conda.io/en/latest/miniconda.html
 
-### 2. Create a conda environment
+---
 
-Open Anaconda Prompt (Windows) or Terminal (Mac/Linux) and run:
+### Option A: Double-click setup (Easiest)
+
+Just double-click the setup file in this folder:
+
+| Windows | Mac/Linux |
+|---------|-----------|
+| `setup.bat` | `setup.sh` |
+
+Wait for it to finish. Done!
+
+---
+
+### Option B: Use the terminal
+
+Open Anaconda Prompt (Windows) or Terminal (Mac/Linux), navigate to this folder, and run:
 
 ```bash
-conda create -n bayesopt python=3.9
-conda activate bayesopt
+conda env create -f environment.yml
+conda activate bayesopt-fluorescence
 ```
 
-### 3. Install required packages
+## Getting Started
 
-Navigate to this folder and run:
+After installation:
 
 ```bash
-cd path/to/bayesopt-fluorescence
-pip install -r requirements.txt
+conda activate bayesopt-fluorescence
+jupyter notebook
 ```
 
-Or install manually:
+Then open `workshop_notebook.ipynb` and follow the step-by-step guide.
 
-```bash
-pip install numpy pandas torch gpytorch botorch matplotlib openpyxl scipy scikit-learn
-```
-
-## Running the Workshop
-
-1. Open Anaconda Navigator
-2. Launch Jupyter Notebook
-3. Navigate to this folder
-4. Open `workshop_notebook.ipynb`
-5. Follow the instructions in the notebook!
+**Prefer the command line?** See [CLI_GUIDE.md](CLI_GUIDE.md) for the terminal-based workflow.
 
 ## Quick Start Guide
 
