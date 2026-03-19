@@ -211,24 +211,28 @@ def main():
         for j, param_name in enumerate(ExperimentConfig.PARAMETER_NAMES):
             print(f"    {param_name}: {candidate[j]:.3f}")
 
-    # Calculate predicted performance for candidates
-    logger.info("Predicting performance for new candidates...")
-    with torch.no_grad():
-        candidate_normalized = (final_candidates - bounds_tensor[0]) / (bounds_tensor[1] - bounds_tensor[0])
-        candidate_normalized = candidate_normalized.double()
-        predictions = multi_model(candidate_normalized)
+    # Calculate predicted performance for candidates (optional - may fail for some model configurations)
+    try:
+        logger.info("Predicting performance for new candidates...")
+        with torch.no_grad():
+            candidate_normalized = (final_candidates - bounds_tensor[0]) / (bounds_tensor[1] - bounds_tensor[0])
+            candidate_normalized = candidate_normalized.double()
+            predictions = multi_model(candidate_normalized)
 
-    # Stack predictions from both models
-    pred_standardized = torch.stack([pred.mean for pred in predictions], dim=-1).numpy()
+        # Stack predictions from both models
+        pred_standardized = torch.stack([pred.mean for pred in predictions], dim=-1).numpy()
 
-    # Convert predictions back to original scale
-    pred_original = inverse_transform_objectives(torch.from_numpy(pred_standardized), model_scalers)
+        # Convert predictions back to original scale
+        pred_original = inverse_transform_objectives(torch.from_numpy(pred_standardized), model_scalers)
 
-    print(f"\nPredicted Performance:")
-    for i, pred in enumerate(pred_original):
-        print(f"  Candidate {i+1}:")
-        for j, obj_name in enumerate(ExperimentConfig.OBJECTIVE_NAMES):
-            print(f"    {obj_name}: {pred[j]:.3f}")
+        print(f"\nPredicted Performance:")
+        for i, pred in enumerate(pred_original):
+            print(f"  Candidate {i+1}:")
+            for j, obj_name in enumerate(ExperimentConfig.OBJECTIVE_NAMES):
+                print(f"    {obj_name}: {pred[j]:.3f}")
+    except Exception as e:
+        logger.warning(f"Could not predict performance for candidates: {e}")
+        logger.info("Optimization completed successfully (predictions skipped)")
 
     logger.info("Optimization completed successfully")
 
