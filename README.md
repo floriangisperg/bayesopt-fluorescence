@@ -15,38 +15,51 @@ This codebase implements a Bayesian optimization framework for optimizing scFv a
 - **Cross-validation** and model uncertainty quantification
 - ## Installation
 
-### Quick Start (Recommended)
-
 Requires **Anaconda** or **Miniconda**.
 
-```bash
-# 1. Clone or download this repository
-git clone <repository-url>
-cd bayesopt-fluorescence
+### Option A: Double-click setup (Easiest)
 
-# 2. Create and activate the conda environment
+Just double-click the setup file in this folder:
+
+| Windows | Mac/Linux |
+|---------|-----------|
+| `setup.bat` | `setup.sh` |
+
+The script will create the conda environment, install all packages, and register the Jupyter kernel.
+
+### Option B: Use the terminal
+
+```bash
+# 1. Create the environment
 conda env create -f environment.yml
+
+# 2. Activate it
 conda activate bayesopt-fluorescence
 
-# 3. Register the kernel for Jupyter (optional but recommended)
+# 3. (Optional) Register Jupyter kernel
 python -m ipykernel install --user --name bayesopt-fluorescence --display-name "Python (BayesOpt)"
 ```
-
-That's it! You're ready to run the notebooks.
 
 ### GPU Support (Optional)
 
 If you have a CUDA-capable GPU, edit `environment.yml` and remove the `cpuonly` line before creating the environment.
 
-### Alternative: pip installation
+## How to Use
 
-If you prefer pip over conda:
+You have two ways to run the optimization:
+
+### Option 1: Jupyter Notebook (Recommended for beginners)
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+conda activate bayesopt-fluorescence
+jupyter notebook
 ```
+
+Then open `workshop_notebook.ipynb` for a step-by-step interactive guide.
+
+### Option 2: Command Line
+
+See [CLI_GUIDE.md](CLI_GUIDE.md) for the command-line workflow.
 
 ## Usage
 
