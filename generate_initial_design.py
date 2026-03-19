@@ -18,7 +18,7 @@ import torch
 
 from config import ExperimentConfig, ConstraintConfig
 from acquisition.utils import save_experiments_to_excel, generate_initial_design
-from constraints.urea_dilution import correct_constraints_iterative
+from constraints.urea_dilution import urea_constraint_callable
 
 # Set up logging
 logging.basicConfig(
@@ -60,35 +60,23 @@ def main():
     # Get bounds from config
     bounds = torch.from_numpy(ExperimentConfig.PARAMETER_BOUNDS).double()
 
-    # Generate initial design
+    # Set up constraint callable if enabled
+    constraint_callable = None
+    if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
+        logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
+        constraint_callable = urea_constraint_callable
+
+    # Generate initial design with constraint-aware rejection sampling
     samples = generate_initial_design(
         n_samples=args.n_samples,
         bounds=bounds,
         seed=args.seed,
         n_candidates=args.n_candidates,
-        use_maximin=not args.no_maximin
+        use_maximin=not args.no_maximin,
+        constraint_callable=constraint_callable
     )
 
-    # Apply physical constraints
-    samples_list = [sample.numpy() for sample in samples]
-    corrected_samples = correct_constraints_iterative(
-        samples_list,
-        urea_decrease_step=ConstraintConfig.UREA_DECREASE_STEP,
-        dilution_increase_step=ConstraintConfig.DILUTION_INCREASE_STEP,
-        max_dilution_factor=ConstraintConfig.MAX_DILUTION_FACTOR,
-        max_attempts=ConstraintConfig.MAX_ADJUSTMENT_ATTEMPTS
-    )
-
-    # Convert back to tensor
-    final_samples = torch.from_numpy(np.array(corrected_samples)).double()
-
-    # Calculate and log constraint violations
-    n_violations = sum(1 for orig, corr in zip(samples_list, corrected_samples)
-                      if not np.allclose(orig, corr, atol=0.01))
-    if n_violations > 0:
-        logger.info(f"Applied constraint corrections to {n_violations}/{len(samples)} samples")
-    else:
-        logger.info("All samples satisfied physical constraints")
+    final_samples = samples
 
     # Save to Excel
     output_path = output_dir / f"{args.project_name}_experimental_plan.xlsx"
@@ -107,7 +95,7 @@ def main():
     for _, row in df.iterrows():
         final_urea = row["Final Urea [M]"]
         dilution_factor = row["Dilution Factor"]
-        urea_ref = ((final_urea * dilution_factor) - 8) / (dilution_factor - 1)
+        urea_ref = ((final_urea * dilution_factor) - ConstraintConfig.SOLUBILIZATION_UREA) / (dilution_factor - 1)
         urea_refolding.append(urea_ref)
 
     df["Urea Refolding [M]"] = urea_refolding

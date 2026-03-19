@@ -19,13 +19,14 @@ from botorch.sampling import SobolQMCNormalSampler
 from botorch.utils.transforms import unnormalize
 
 from config import (
-    ExperimentConfig, OptimizationConfig, ModelConfig,
-    get_bounds_tensor, get_transposed_bounds, get_optimization_params
+    ExperimentConfig, OptimizationConfig, ModelConfig, ConstraintConfig,
+    get_bounds_tensor, get_transposed_bounds, get_normalized_bounds, get_optimization_params
 )
 from data.preprocessing import prepare_data, load_scalers, inverse_transform_objectives
 from models import GPModel, load_gp_model
-from acquisition import create_qnehvi_acquisition, optimize_qnehvi, update_experimental_database
-from constraints.urea_dilution import correct_constraints_iterative
+from acquisition import create_qnehvi_acquisition, optimize_qnehvi, get_urea_constraint_callable
+from acquisition.utils import update_experimental_database
+from constraints import correct_constraints_iterative
 
 # Set up logging
 logging.basicConfig(
@@ -119,6 +120,7 @@ def main():
     # Get optimization parameters
     opt_params = get_optimization_params()
     bounds_tensor = get_transposed_bounds()
+    normalized_bounds = get_normalized_bounds(num_features=train_x_normalized.shape[1])
 
     # Initialize SobolQMCNormalSampler for better MC sampling
     logger.info("Initializing SobolQMCNormalSampler...")
@@ -135,25 +137,47 @@ def main():
         sampler=qnehvi_sampler
     )
 
+    # Set up nonlinear constraints if enabled
+    nonlinear_inequality_constraints = None
+    if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
+        logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
+        nonlinear_inequality_constraints = [get_urea_constraint_callable(bounds=bounds_tensor)]
+
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {args.n_candidates} candidates...")
     candidates_normalized = optimize_qnehvi(
         acq_function=acq_function,
-        bounds=bounds_tensor,
+        bounds=normalized_bounds,
         batch_size=args.n_candidates,
         sequential=True,
+        nonlinear_inequality_constraints=nonlinear_inequality_constraints,
         **opt_params
     )
 
     # Denormalize candidates using botorch's unnormalize
     candidates_original = unnormalize(candidates_normalized, bounds_tensor)
 
-    # Apply physical constraints
-    candidates_list = [candidate.numpy() for candidate in candidates_original]
-    corrected_candidates = correct_constraints_iterative(candidates_list)
+    # The optimizer should return feasible points already. Keep a repair fallback
+    # for numerical edge cases or future constraint changes.
+    final_candidates = candidates_original.double()
 
-    # Convert back to tensor
-    final_candidates = torch.from_numpy(np.array(corrected_candidates)).double()
+    # Verify constraint satisfaction (sanity check when constraint is enabled)
+    if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
+        logger.info("Verifying constraint satisfaction for generated candidates...")
+        repaired_candidates = []
+        for i, candidate in enumerate(final_candidates):
+            final_urea = candidate[ConstraintConfig.FINAL_UREA_IDX].item()
+            dilution_factor = candidate[ConstraintConfig.DILUTION_FACTOR_IDX].item()
+            constraint_value = final_urea * dilution_factor - ConstraintConfig.SOLUBILIZATION_UREA
+            if constraint_value <= 0:
+                logger.warning(f"Candidate {i+1} violates constraint: "
+                             f"final_urea={final_urea:.3f}, dilution_factor={dilution_factor:.3f}, "
+                             f"constraint_value={constraint_value:.3f}")
+                repaired_candidates.append(candidate.numpy())
+            else:
+                repaired_candidates.append(candidate.numpy())
+        repaired_candidates = correct_constraints_iterative(repaired_candidates)
+        final_candidates = torch.from_numpy(np.array(repaired_candidates)).double()
 
     # Create DataFrame for new experiments
     new_experiments_df = pd.DataFrame(

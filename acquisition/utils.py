@@ -4,7 +4,7 @@ Utilities for acquisition function optimization and experimental planning.
 
 import os
 import logging
-from typing import List
+from typing import List, Callable
 
 import numpy as np
 import pandas as pd
@@ -92,11 +92,151 @@ def denormalize_parameters(normalized_data: torch.Tensor,
     return normalized_data * (upper_bounds - lower_bounds) + lower_bounds
 
 
+def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
+                            dilution_idx: int = 2, urea_idx: int = 4,
+                            solubilization_urea: float = 8.0,
+                            seed: int = 42,
+                            n_candidates: int = 100,
+                            use_maximin: bool = True) -> np.ndarray:
+    """Generate Latin Hypercube Design that respects the urea dilution constraint.
+
+    Uses conditional sampling to maintain stratification while satisfying:
+        final_urea * dilution_factor > solubilization_urea
+
+    The approach:
+    1. Generate LHD for independent parameters (DTT, GSSG, pH)
+    2. Generate LHD for dilution_factor
+    3. For each dilution_factor, sample final_urea from its feasible range
+
+    Args:
+        n_samples: Number of samples to generate.
+        bounds: Parameter bounds (2 x d tensor).
+        dilution_idx: Index of dilution factor parameter.
+        urea_idx: Index of final urea parameter.
+        solubilization_urea: Urea concentration in solubilization buffer (M).
+        seed: Random seed for reproducibility.
+        n_candidates: Number of candidate designs for maximin optimization.
+        use_maximin: Whether to apply maximin criterion optimization.
+
+    Returns:
+        Array of samples (n_samples x d) satisfying the constraint.
+    """
+    from scipy.stats import qmc
+    from scipy.spatial.distance import pdist
+
+    rng = np.random.default_rng(seed)
+    n_dims = bounds.shape[1]
+
+    # Convert bounds to numpy for easier manipulation
+    bounds_np = bounds.numpy() if isinstance(bounds, torch.Tensor) else bounds
+
+    # Get bounds for constrained parameters
+    dilution_lower = bounds_np[0, dilution_idx]
+    dilution_upper = bounds_np[1, dilution_idx]
+    urea_lower = bounds_np[0, urea_idx]
+    urea_upper = bounds_np[1, urea_idx]
+
+    # Indices of independent parameters
+    independent_idx = [i for i in range(n_dims) if i not in [dilution_idx, urea_idx]]
+
+    def generate_single_design():
+        """Generate a single constrained LHD."""
+        # Generate LHD for independent parameters
+        if independent_idx:
+            sampler_ind = qmc.LatinHypercube(d=len(independent_idx), seed=rng.integers(2**31))
+            samples_ind_unit = sampler_ind.random(n=n_samples)
+
+            # Denormalize independent parameters to their actual bounds
+            samples_ind = np.zeros_like(samples_ind_unit)
+            for j, idx in enumerate(independent_idx):
+                range_j = bounds_np[1, idx] - bounds_np[0, idx]
+                samples_ind[:, j] = samples_ind_unit[:, j] * range_j + bounds_np[0, idx]
+
+        # Generate LHD for dilution factor (in unit space)
+        sampler_dil = qmc.LatinHypercube(d=1, seed=rng.integers(2**31))
+        samples_dil_unit = sampler_dil.random(n=n_samples).flatten()
+
+        # Denormalize dilution factor to get actual values
+        dilution_range = dilution_upper - dilution_lower
+        samples_dil = samples_dil_unit * dilution_range + dilution_lower
+
+        # For each dilution factor, compute feasible urea range and sample from it
+        # Constraint: final_urea > solubilization_urea / dilution_factor
+        min_feasible_urea = solubilization_urea / samples_dil
+
+        # Clip to parameter bounds
+        min_feasible_urea = np.maximum(min_feasible_urea, urea_lower)
+        max_feasible_urea = urea_upper
+
+        # Check if all samples are feasible
+        feasible = min_feasible_urea < max_feasible_urea
+        if not np.all(feasible):
+            logger.warning(f"Some samples have no feasible urea range (dilution too low)")
+
+        # Generate stratified samples for urea within feasible ranges
+        # Use Latin Hypercube approach: divide each range into n equal parts
+        sampler_urea = qmc.LatinHypercube(d=1, seed=rng.integers(2**31))
+        samples_urea_unit = sampler_urea.random(n=n_samples).flatten()
+
+        # Transform unit samples to feasible ranges
+        samples_urea = np.zeros(n_samples)
+        for i in range(n_samples):
+            urea_min = min_feasible_urea[i]
+            urea_max = max_feasible_urea
+            samples_urea[i] = samples_urea_unit[i] * (urea_max - urea_min) + urea_min
+
+        # Combine all samples
+        samples = np.zeros((n_samples, n_dims))
+        samples[:, dilution_idx] = samples_dil
+        samples[:, urea_idx] = samples_urea
+
+        if independent_idx:
+            samples[:, independent_idx] = samples_ind
+
+        return samples
+
+    if use_maximin:
+        logger.info(f"Optimizing constrained LHD using maximin criterion with {n_candidates} candidates")
+
+        best_min_dist = 0
+        best_samples = None
+
+        for _ in range(n_candidates):
+            candidate_samples = generate_single_design()
+
+            # Calculate minimum pairwise distance in unit space for fair comparison
+            # Normalize to unit space
+            samples_unit = np.zeros_like(candidate_samples)
+            for i in range(n_dims):
+                range_i = bounds_np[1, i] - bounds_np[0, i]
+                samples_unit[:, i] = (candidate_samples[:, i] - bounds_np[0, i]) / range_i
+
+            min_dist = pdist(samples_unit).min()
+
+            if min_dist > best_min_dist:
+                best_min_dist = min_dist
+                best_samples = candidate_samples
+
+        samples = best_samples
+        logger.info(f"Best constrained design has minimum distance: {best_min_dist:.4f}")
+    else:
+        samples = generate_single_design()
+
+    return samples
+
+
 def generate_initial_design(n_samples: int, bounds: torch.Tensor,
                           seed: int = 42,
                           n_candidates: int = 100,
-                          use_maximin: bool = True) -> torch.Tensor:
+                          use_maximin: bool = True,
+                          constraint_callable: Callable = None,
+                          oversampling_factor: int = 10,
+                          solubilization_urea: float = 8.0) -> torch.Tensor:
     """Generate initial experimental design using Latin Hypercube Sampling.
+
+    Supports constraint satisfaction via:
+    - Constrained LHD for urea constraint (maintains stratification)
+    - Rejection sampling for other constraints
 
     Args:
         n_samples: Number of initial samples to generate.
@@ -104,6 +244,10 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor,
         seed: Random seed for reproducibility.
         n_candidates: Number of candidate designs to evaluate for maximin criterion.
         use_maximin: Whether to apply maximin criterion optimization.
+        constraint_callable: Optional callable that takes a tensor and returns positive
+                        values for feasible samples.
+        oversampling_factor: Factor by which to oversample when using rejection sampling.
+        solubilization_urea: Urea concentration in solubilization buffer (M) for constrained LHD.
 
     Returns:
         Initial design samples (n_samples x d).
@@ -111,11 +255,101 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor,
     from scipy.stats import qmc
     from scipy.spatial.distance import pdist
 
-    # Create Latin Hypercube sampler
+    # Check if this is the urea constraint - use specialized constrained LHD
+    # Check by function name or module
+    is_urea_constraint = False
+    if constraint_callable is not None:
+        func_name = getattr(constraint_callable, '__name__', '')
+        func_module = getattr(constraint_callable, '__module__', '')
+        is_urea_constraint = 'urea' in func_name.lower() or 'urea' in func_module.lower()
+
+    if constraint_callable is not None and is_urea_constraint:
+        # Use constrained LHD that maintains stratification
+        logger.info("Using constrained LHD for urea dilution constraint (preserves stratification)")
+
+        samples = generate_constrained_lhd(
+            n_samples=n_samples,
+            bounds=bounds,
+            dilution_idx=2,
+            urea_idx=4,
+            solubilization_urea=solubilization_urea,
+            seed=seed,
+            n_candidates=n_candidates,
+            use_maximin=use_maximin
+        )
+
+        return torch.from_numpy(samples).double()
+
+    # Create Latin Hypercube sampler for non-urea constraints or no constraint
     sampler = qmc.LatinHypercube(d=bounds.shape[1], seed=seed)
 
-    if use_maximin and n_samples <= 100:
-        # Generate multiple candidate designs and select the one with maximin criterion
+    if constraint_callable is not None:
+        # Use rejection sampling to ensure constraint satisfaction
+        logger.info(f"Using rejection sampling with constraint (oversampling_factor={oversampling_factor})")
+
+        n_total_needed = n_samples * oversampling_factor
+        all_samples_unit = []
+        attempts = 0
+        max_attempts = 100
+
+        while len(all_samples_unit) < n_total_needed and attempts < max_attempts:
+            # Generate batch of samples
+            batch_size = min(n_total_needed * 2, 10000)
+            batch_samples = sampler.random(n=batch_size)
+
+            # Convert to tensor and denormalize for constraint checking
+            batch_tensor = denormalize_parameters(
+                torch.from_numpy(batch_samples).double(), bounds
+            )
+
+            # Check constraint satisfaction
+            constraint_values = constraint_callable(batch_tensor)
+            feasible_mask = constraint_values > 0
+
+            # Keep feasible samples (in unit space)
+            feasible_samples_unit = batch_samples[feasible_mask.numpy()]
+            all_samples_unit.append(feasible_samples_unit)
+
+            attempts += 1
+            if attempts % 20 == 0:
+                logger.info(f"  Rejection sampling: {len(np.vstack(all_samples_unit))} feasible samples after {attempts} attempts")
+
+        if len(all_samples_unit) == 0:
+            raise RuntimeError("Could not find any feasible samples satisfying the constraint!")
+
+        # Combine all feasible samples
+        all_samples_unit = np.vstack(all_samples_unit)
+        logger.info(f"Found {len(all_samples_unit)} feasible samples")
+
+        if use_maximin and len(all_samples_unit) > n_samples:
+            # Select best spread subset using maximin criterion
+            logger.info(f"Selecting {n_samples} samples with best spread...")
+
+            best_min_dist = 0
+            best_indices = None
+
+            for _ in range(n_candidates):
+                # Random subset selection
+                indices = np.random.choice(
+                    len(all_samples_unit), size=n_samples, replace=False
+                )
+                candidate_subset = all_samples_unit[indices]
+
+                # Calculate minimum pairwise distance
+                min_dist = pdist(candidate_subset).min()
+
+                if min_dist > best_min_dist:
+                    best_min_dist = min_dist
+                    best_indices = indices
+
+            samples_unit = all_samples_unit[best_indices]
+            logger.info(f"Best design has minimum distance: {best_min_dist:.4f}")
+        else:
+            # Just take first n_samples
+            samples_unit = all_samples_unit[:n_samples]
+
+    elif use_maximin and n_samples <= 100:
+        # Original maximin optimization without constraints
         logger.info(f"Optimizing design using maximin criterion with {n_candidates} candidates")
 
         best_min_dist = 0
@@ -139,7 +373,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor,
         samples_unit = sampler.random(n=n_samples)
 
     # Denormalize to original bounds
-    samples = denormalize_parameters(torch.from_numpy(samples_unit), bounds)
+    samples = denormalize_parameters(torch.from_numpy(samples_unit).double(), bounds)
 
     logger.info(f"Generated initial design with {n_samples} samples")
     return samples

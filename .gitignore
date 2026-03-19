@@ -35,8 +35,6 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data files (uncomment if needed)
-# *.csv
-# *.xlsx
-# *.pkl
-# *.h5
+# Data files
+*.xlsx
+*.png

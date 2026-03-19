@@ -107,11 +107,25 @@ class LoggingConfig:
 class ConstraintConfig:
     """Configuration for physical constraint handling."""
 
-    # Urea dilution constraint parameters
+    # Enable/disable urea dilution constraint
+    ENABLE_UREA_CONSTRAINT: bool = True
+
+    # Solubilization buffer urea concentration (M)
+    # This is the urea concentration in the starting solubilization buffer
+    SOLUBILIZATION_UREA: float = 8.0  # M
+
+    # Urea dilution constraint parameters (for post-hoc correction fallback)
     UREA_DECREASE_STEP: float = 0.1  # M
     DILUTION_INCREASE_STEP: float = 0.5
+    MIN_DILUTION_FACTOR: float = 2
     MAX_DILUTION_FACTOR: float = 40
+    MAX_FINAL_UREA: float = 6
     MAX_ADJUSTMENT_ATTEMPTS: int = 500
+
+    # Parameter indices for constraint calculation
+    # Order: [DTT, GSSG, Dilution Factor, pH, Final Urea]
+    DILUTION_FACTOR_IDX: int = 2
+    FINAL_UREA_IDX: int = 4
 
 # Utility functions
 def get_bounds_tensor() -> torch.Tensor:
@@ -135,7 +149,6 @@ def get_optimization_params() -> Dict[str, Any]:
     from os import environ
 
     params = {
-        "batch_size": OptimizationConfig.BATCH_SIZE,
         "mc_samples": OptimizationConfig.MC_SAMPLES,
         "num_restarts": OptimizationConfig.NUM_RESTARTS,
         "raw_samples": OptimizationConfig.RAW_SAMPLES,
