@@ -1,190 +1,230 @@
 # Bayesian Optimization for Protein Refolding
 
-An implementation of multi-objective Bayesian optimization for protein refolding optimization using fluorescence-based stability metrics.
+Bayesian optimization workflow for fluorescence-guided protein refolding experiments.
 
-## Overview
+This repository optimizes refolding conditions for two objectives, `Delta AEW` and `p_proxy`, using Gaussian process surrogate models and qNEHVI batch acquisition. The same core workflow is available through either a Jupyter notebook or command-line scripts.
 
-This codebase implements a Bayesian optimization framework for optimizing scFv antibody refolding conditions. It uses qNEHVI (Noisy Expected Hypervolume Improvement) acquisition function with Gaussian Process models to simultaneously maximize protein yield and concentration while respecting physical constraints of the urea dilution process.
+## Documentation Map
+
+Use this file as the main reference.
+
+- [WORKSHOP_README.md](WORKSHOP_README.md): notebook-first quickstart for workshop use
+- [CLI_GUIDE.md](CLI_GUIDE.md): command-focused walkthrough for terminal use
 
 ## Features
 
-- **Multi-objective optimization** using qNEHVI
-- **Single-task Gaussian Process models** with Matérn kernels
-- **Physical constraint handling** for urea dilution chemistry
-- **Latin Hypercube Sampling** with maximin criterion for initial experimental design
-- **Cross-validation** and model uncertainty quantification
-- ## Installation
+- Multi-objective Bayesian optimization with qNEHVI
+- Separate single-task GP models for each objective
+- Constraint-aware initial design generation
+- Nonlinear urea constraint support during acquisition optimization
+- Excel-based handoff between experiment planning and wet-lab execution
+- Cross-validation and validation plots for trained models
+
+## Installation
 
 Requires **Anaconda** or **Miniconda**.
 
-### Option A: Double-click setup (Easiest)
+### Option A: Double-click setup
 
 Just double-click the setup file in this folder:
 
-| Windows | Mac/Linux |
-|---------|-----------|
+| Windows     | Mac/Linux  |
+| ----------- | ---------- |
 | `setup.bat` | `setup.sh` |
 
-The script will create the conda environment, install all packages, and register the Jupyter kernel.
+The setup script creates the conda environment, installs dependencies, and registers the Jupyter kernel.
+
+**Note:** The script activates the environment only temporarily during installation. After it finishes, open a new terminal and run:
+
+```bash
+conda activate bayesopt-fluorescence
+```
+
+Then you're ready to start Jupyter.
 
 ### Option B: Use the terminal
 
 ```bash
-# 1. Create the environment
 conda env create -f environment.yml
-
-# 2. Activate it
 conda activate bayesopt-fluorescence
 
-# 3. (Optional) Register Jupyter kernel
+# Optional: register the kernel for Jupyter
 python -m ipykernel install --user --name bayesopt-fluorescence --display-name "Python (BayesOpt)"
 ```
 
-### GPU Support (Optional)
+### GPU support
 
-If you have a CUDA-capable GPU, edit `environment.yml` and remove the `cpuonly` line before creating the environment.
+If you want CUDA-enabled PyTorch, remove `cpuonly` from `environment.yml` before creating the environment.
 
-## How to Use
+## Choose a Workflow
 
-You have two ways to run the optimization:
-
-### Option 1: Jupyter Notebook (Recommended for beginners)
+### Notebook workflow
 
 ```bash
 conda activate bayesopt-fluorescence
 jupyter notebook
 ```
 
-Then open `workshop_notebook.ipynb` for a step-by-step interactive guide.
+Then open `workshop_notebook.ipynb`.
 
-### Option 2: Command Line
+This is the easiest path for workshops and first-time users.
 
-See [CLI_GUIDE.md](CLI_GUIDE.md) for the command-line workflow.
+### CLI workflow
 
-## Usage
+Use the three scripts directly:
 
-The workflow consists of three main steps:
+- `python generate_initial_design.py`
+- `python train_models.py`
+- `python run_optimization.py`
 
-### 1. Generate Initial Experimental Design
+See [CLI_GUIDE.md](CLI_GUIDE.md) for the full command sequence.
+
+## Core Workflow
+
+Regardless of whether you use the notebook or CLI, the optimization loop is the same:
+
+1. Generate an initial experimental design.
+2. Run the experiments and fill in the objective columns in the Excel file.
+3. Train GP models on the completed data.
+4. Generate the next batch of candidate experiments.
+5. Append completed results to your running dataset and repeat.
+
+## CLI Commands
+
+### 1. Generate the initial design
 
 ```bash
 python generate_initial_design.py \
     --n_samples 20 \
     --output_dir results \
-    --project_name initial_design \
+    --project_name iteration_0 \
     --seed 42 \
     --n_candidates 100
 ```
 
-This creates an initial set of 20 experiments using Latin Hypercube Sampling with maximin criterion optimization (evaluates 100 candidate designs) and physical constraints applied. Use `--no_maximin` to disable maximin optimization for faster generation.
+Output:
 
-### 2. Train Gaussian Process Models
+- `results/iteration_0_experimental_plan.xlsx`
 
-After conducting the initial experiments and measuring outcomes:
+### 2. Train the GP models
+
+After you have filled in `Delta AEW` and `p_proxy` in the spreadsheet:
 
 ```bash
 python train_models.py \
-    --data_file results/initial_design_experimental_results.xlsx \
+    --data_file results/iteration_0_experimental_plan.xlsx \
     --model_dir models \
-    --project_name iteration_1_models
+    --project_name iteration_0_models
 ```
 
-This trains separate GP models for each objective (Delta AEW and p_proxy) with cross-validation.
+Typical outputs:
 
-### 3. Run Bayesian Optimization
+- `models/iteration_0_models/model_1_delta_aew.pth`
+- `models/iteration_0_models/model_2_p_proxy.pth`
+- `models/iteration_0_models/scaler_1_delta_aew.pkl`
+- `models/iteration_0_models/scaler_2_p_proxy.pkl`
+
+### 3. Generate the next candidates
 
 ```bash
 python run_optimization.py \
-    --data_file results/initial_design_experimental_results.xlsx \
-    --model_dir models/iteration_1_models \
+    --data_file results/iteration_0_experimental_plan.xlsx \
+    --model_dir models/iteration_0_models \
     --output_dir results \
     --n_candidates 4 \
-    --iteration 2
+    --iteration 1
 ```
 
-This generates 4 new experimental conditions optimized for both objectives.
+Outputs:
+
+- `results/Iteration_1/Iteration_1_experimental_plan.xlsx`
+- `results/experimental_database.xlsx`
+
+`experimental_database.xlsx` is a running log of generated candidate batches. It is not a replacement for your fully completed training dataset, because new candidate plans are created with empty objective columns until experiments are performed.
 
 ## Configuration
 
-All parameters are centralized in `config.py`:
+Most project settings live in `config.py`.
 
-- **Experimental bounds** for parameters (DTT, GSSG, dilution factor, pH, final urea)
-- **Optimization hyperparameters** (batch size, MC samples, reference point)
-- **Model training parameters** (learning rate, iterations, kernel settings)
-- **Constraint parameters** for urea dilution physics
+- `ExperimentConfig`: parameter bounds, parameter names, objective names
+- `ConstraintConfig`: urea constraint toggle and parameters
+- `ModelConfig`: GP training and validation settings
+- `OptimizationConfig`: qNEHVI and acquisition optimization settings
 
-## Code Structure
+The default experimental parameters are:
 
+- `DTT [mM]`: 0 to 25
+- `GSSG [mM]`: 0 to 2.5
+- `Dilution Factor`: 2 to 40
+- `pH`: 8 to 11
+- `Final Urea [M]`: 0 to 6
+
+## Constraint Handling
+
+The physical urea constraint is controlled by `ConstraintConfig.ENABLE_UREA_CONSTRAINT`.
+
+Current implementation:
+
+- Initial designs use a constrained Latin hypercube strategy specialized for the urea constraint.
+- Bayesian optimization passes the urea condition as a nonlinear inequality constraint to the acquisition optimizer.
+- A post-processing repair step still exists as a fallback for numerical edge cases.
+
+The feasibility condition is:
+
+```text
+final_urea * dilution_factor > solubilization_urea
 ```
+
+With the default settings in `config.py`, this becomes:
+
+```text
+final_urea * dilution_factor > 8.0
+```
+
+The corresponding refolding-buffer urea concentration is:
+
+```text
+urea_refolding = (final_urea * dilution_factor - solubilization_urea) / (dilution_factor - 1)
+```
+
+Feasible points have `urea_refolding > 0`.
+
+## Repository Structure
+
+```text
 bayesopt-fluorescence/
-├── config.py                 # Centralized configuration
-├── generate_initial_design.py # Initial experimental design
-├── train_models.py          # GP model training
-├── run_optimization.py      # Main BO loop
-├── README.md                # This file
-├── models/                  # GP modeling utilities
-│   ├── __init__.py
-│   ├── gp_model.py         # Single-task GP model definition
-│   ├── gp_fitting.py       # Training and loading functions
-│   └── gp_validation.py    # Cross-validation utilities
-├── acquisition/            # Acquisition functions
-│   ├── __init__.py
-│   ├── qnehvi.py          # qNEHVI implementation
-│   └── utils.py           # Experimental planning utilities
-├── constraints/            # Physical constraints
-│   ├── __init__.py
-│   └── urea_dilution.py   # Urea dilution constraints
-└── data/                  # Data preprocessing
-    ├── __init__.py
-    └── preprocessing.py   # Normalization utilities
+|-- config.py
+|-- generate_initial_design.py
+|-- train_models.py
+|-- run_optimization.py
+|-- workshop_notebook.ipynb
+|-- README.md
+|-- WORKSHOP_README.md
+|-- CLI_GUIDE.md
+|-- acquisition/
+|-- constraints/
+|-- data/
+`-- models/
 ```
 
-## Parameters
+## Troubleshooting
 
-### Experimental Parameters
+### Missing imports or module errors
 
-- **DTT**: 0-25 mM (solubilization buffer)
-- **GSSG**: 0-2.5 mM
-- **Dilution Factor**: 2-40
-- **pH**: 8-11
-- **Final Urea**: 0-6 M
+Activate the environment first:
 
-### Optimization Objectives
-
-1. **Delta AEW** (fluorescence-based yield metric)
-2. **p_proxy** (protein concentration proxy)
-
-### Physical Constraints
-
-The urea dilution constraint ensures physically feasible refolding conditions:
-
-```
-urea_refolding = (final_urea * dilution_factor - 8) / (dilution_factor - 1) > 0
+```bash
+conda activate bayesopt-fluorescence
 ```
 
-## Methodology
+### Missing required columns
 
-### Gaussian Process Models
+Training expects all parameter columns and both objective columns to be present in the Excel file.
 
-- Single-task GPs with Matérn kernels (ν=2.5)
-- Automatic Relevance Determination (ARD) for feature selection
-- Standardized objectives with proper uncertainty quantification
+### Model directory errors
 
-### Acquisition Function
-
-- qNEHVI for noisy multi-objective optimization
-- Reference point at [0.0, 0.0] in standardized space
-- Sequential optimization for batch generation
-
-### Constraint Handling
-
-- Iterative adjustment strategy for urea dilution constraints
-- Automatic parameter correction to ensure feasibility
+Make sure `--model_dir` points to the exact subdirectory created by `train_models.py`.
 
 ## Citation
 
-If you use this code in your research, please cite:
-
-```
-[Add your citation information here]
-```
+Add your project citation here if you plan to distribute or publish this workflow.
