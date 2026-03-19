@@ -224,7 +224,3 @@ Training expects all parameter columns and both objective columns to be present 
 ### Model directory errors
 
 Make sure `--model_dir` points to the exact subdirectory created by `train_models.py`.
-
-## Citation
-
-Add your project citation here if you plan to distribute or publish this workflow.

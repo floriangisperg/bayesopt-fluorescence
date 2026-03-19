@@ -1,67 +1,51 @@
-# Bayesian Optimization Workshop
+# Workshop Quickstart
 
-Welcome to the hands-on Bayesian Optimization workshop!
+This file is the short notebook-first entry point for workshop participants.
 
----
+For the full project documentation, setup details, configuration notes, and the current constraint description, see [README.md](README.md).
 
 ## Installation
 
-**Prerequisite:** Anaconda or Miniconda must be installed.
-- Download from: https://docs.conda.io/en/latest/miniconda.html
+Prerequisite: install Anaconda or Miniconda.
 
----
+### Option A: Double-click setup
 
-### Option A: Double-click setup (Easiest)
-
-Just double-click the setup file in this folder:
-
-| Windows | Mac/Linux |
-|---------|-----------|
+| Windows     | Mac/Linux  |
+| ----------- | ---------- |
 | `setup.bat` | `setup.sh` |
 
-Wait for it to finish. Done!
-
----
-
-### Option B: Use the terminal
-
-Open Anaconda Prompt (Windows) or Terminal (Mac/Linux), navigate to this folder, and run:
+### Option B: Terminal
 
 ```bash
 conda env create -f environment.yml
 conda activate bayesopt-fluorescence
 ```
 
-## Getting Started
-
-After installation:
+## Start the Notebook
 
 ```bash
 conda activate bayesopt-fluorescence
 jupyter notebook
 ```
 
-Then open `workshop_notebook.ipynb` and follow the step-by-step guide.
+Open `workshop_notebook.ipynb` and follow the cells in order.
 
-**Prefer the command line?** See [CLI_GUIDE.md](CLI_GUIDE.md) for the terminal-based workflow.
+## Workshop Loop
 
-## Quick Start Guide
+1. Define the campaign settings in the notebook.
+2. Generate the initial experimental plan.
+3. Run the experiments and fill in the Excel file.
+4. Load the measured results.
+5. Train the models.
+6. Generate the next AI-suggested batch.
+7. Repeat.
 
-1. **Edit Step 2** - Define your experiment parameters and objectives
-2. **Run Step 3** - Generate your initial experimental design
-3. **Do experiments** - Perform the experiments and record results in the Excel file
-4. **Run Step 4** - Load your results
-5. **Run Step 5** - Train the model
-6. **Run Step 6** - Get AI-suggested next experiments
-7. **Repeat** steps 3-6 for more iterations
+## If You Prefer the Terminal
 
-## Need Help?
+Use [CLI_GUIDE.md](CLI_GUIDE.md) for the script-based workflow.
 
-- Check the "Tips & Troubleshooting" section at the end of the notebook
-- Ask the workshop instructor
+## Files You Will Use
 
-## Files
-
-- `workshop_notebook.ipynb` - The main workshop notebook
-- `workshop_results/` - Your experimental results will be saved here
-- `config.py` - Advanced configuration (usually don't need to edit)
+- `workshop_notebook.ipynb`: guided workflow
+- `workshop_results/`: generated workshop outputs
+- `config.py`: advanced configuration, including the urea constraint toggle
