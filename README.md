@@ -15,21 +15,38 @@ This codebase implements a Bayesian optimization framework for optimizing scFv a
 - **Cross-validation** and model uncertainty quantification
 - ## Installation
 
-### Dependencies
+### Quick Start (Recommended)
+
+Requires **Anaconda** or **Miniconda**.
 
 ```bash
-# Core dependencies
-pip install torch gpytorch botorch
-pip install numpy pandas matplotlib
-pip install scikit-learn scipy
-pip install openpyxl  # For Excel file handling
+# 1. Clone or download this repository
+git clone <repository-url>
+cd bayesopt-fluorescence
+
+# 2. Create and activate the conda environment
+conda env create -f environment.yml
+conda activate bayesopt-fluorescence
+
+# 3. Register the kernel for Jupyter (optional but recommended)
+python -m ipykernel install --user --name bayesopt-fluorescence --display-name "Python (BayesOpt)"
 ```
 
-### Setup
+That's it! You're ready to run the notebooks.
 
-1. Clone or download this repository
-2. Install dependencies as listed above
-3. Ensure Python 3.8+ is installed
+### GPU Support (Optional)
+
+If you have a CUDA-capable GPU, edit `environment.yml` and remove the `cpuonly` line before creating the environment.
+
+### Alternative: pip installation
+
+If you prefer pip over conda:
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
 ## Usage
 

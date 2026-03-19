@@ -1,0 +1,34 @@
+name: bayesopt-fluorescence
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  # Python
+  - python=3.10
+
+  # Core scientific stack (from conda)
+  - numpy>=1.21
+  - pandas>=1.3
+  - scipy>=1.7
+  - scikit-learn>=1.0
+
+  # PyTorch (conda version is better optimized)
+  - pytorch>=2.0
+  - cpuonly  # Remove this line if you need CUDA/GPU support
+
+  # Visualization
+  - matplotlib>=3.4
+  - seaborn>=0.11
+
+  # Excel support
+  - openpyxl>=3.0
+
+  # Jupyter
+  - jupyter>=1.0
+  - ipykernel>=6.0
+
+  # Pip packages (not well maintained in conda)
+  - pip:
+    - gpytorch>=1.11
+    - botorch>=0.9
