@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 
 import torch
-from botorch.acquisition.multi_objective import qNoisyExpectedHypervolumeImprovement
+from botorch.acquisition.multi_objective import qLogNoisyExpectedHypervolumeImprovement
 from botorch.acquisition.multi_objective import IdentityMCMultiOutputObjective
 from botorch.optim import optimize_acqf
 
@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 def create_qnehvi_acquisition(model,
                             reference_point: torch.Tensor,
                             sampler: object,
-                            X_baseline: Optional[torch.Tensor] = None) -> qNoisyExpectedHypervolumeImprovement:
+                            X_baseline: Optional[torch.Tensor] = None,
+                            n_objectives: int = 2) -> qLogNoisyExpectedHypervolumeImprovement:
     """Create a qNEHVI acquisition function.
 
     Args:
@@ -26,14 +27,15 @@ def create_qnehvi_acquisition(model,
         reference_point: Reference point for hypervolume calculation.
         sampler: MC sampler for acquisition function (e.g., SobolQMCNormalSampler).
         X_baseline: Baseline observations (optional).
+        n_objectives: Number of objectives (default: 2).
 
     Returns:
         Configured qNEHVI acquisition function.
     """
     # Standard objective for multi-output optimization
-    objective = IdentityMCMultiOutputObjective(outcomes=[0, 1])
+    objective = IdentityMCMultiOutputObjective(outcomes=list(range(n_objectives)))
 
-    return qNoisyExpectedHypervolumeImprovement(
+    return qLogNoisyExpectedHypervolumeImprovement(
         model=model,
         ref_point=reference_point,
         X_baseline=X_baseline,
