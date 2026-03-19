@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from config import ExperimentConfig, ConstraintConfig
+from config import ExperimentConfig, ConstraintConfig, get_transposed_bounds
 from acquisition.utils import save_experiments_to_excel, generate_initial_design
 from constraints.urea_dilution import urea_constraint_callable
 
@@ -57,8 +57,8 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get bounds from config
-    bounds = torch.from_numpy(ExperimentConfig.PARAMETER_BOUNDS).double()
+    # Get bounds from config (in BoTorch format: 2 x d tensor)
+    bounds = get_transposed_bounds()
 
     # Set up constraint callable if enabled
     constraint_callable = None

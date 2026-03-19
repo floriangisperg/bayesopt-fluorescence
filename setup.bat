@@ -14,7 +14,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [1/3] Creating conda environment...
-conda env create -f environment.yml --force
+conda env create -f environment.yml -y
 if %errorlevel% neq 0 (
     echo ERROR: Failed to create environment
     pause
