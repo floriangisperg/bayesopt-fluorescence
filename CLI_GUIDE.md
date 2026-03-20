@@ -32,14 +32,14 @@ python generate_initial_design.py \
 
 Arguments:
 
-| Argument         | Default          | Description                         |
-| ---------------- | ---------------- | ----------------------------------- |
-| `--n_samples`    | 20               | Number of initial experiments       |
-| `--output_dir`   | `results`        | Output directory                    |
-| `--project_name` | `initial_design` | Base name for the output file       |
-| `--seed`         | 42               | Random seed                         |
-| `--n_candidates` | 100              | Candidate designs for maximin       |
-| `--no_maximin`   | False            | Disable maximin selection           |
+| Argument         | Default          | Description                   |
+| ---------------- | ---------------- | ----------------------------- |
+| `--n_samples`    | 20               | Number of initial experiments |
+| `--output_dir`   | `results`        | Output directory              |
+| `--project_name` | `initial_design` | Base name for the output file |
+| `--seed`         | 42               | Random seed                   |
+| `--n_candidates` | 100              | Candidate designs for maximin |
+| `--no_maximin`   | False            | Disable maximin selection     |
 
 Output:
 
@@ -96,14 +96,14 @@ python run_optimization.py \
 
 Arguments:
 
-| Argument         | Default      | Description                                  |
-| ---------------- | ------------ | -------------------------------------------- |
-| `--data_file`    | required     | Excel file with all completed data so far    |
-| `--model_dir`    | required     | Directory with trained models                |
-| `--output_dir`   | `results`    | Output directory                             |
-| `--n_candidates` | 4            | Number of new candidates                     |
-| `--iteration`    | required     | Iteration number for the new batch           |
-| `--smoke_test`   | False        | Use reduced computation for quick testing    |
+| Argument         | Default   | Description                               |
+| ---------------- | --------- | ----------------------------------------- |
+| `--data_file`    | required  | Excel file with all completed data so far |
+| `--model_dir`    | required  | Directory with trained models             |
+| `--output_dir`   | `results` | Output directory                          |
+| `--n_candidates` | 4         | Number of new candidates                  |
+| `--iteration`    | required  | Iteration number for the new batch        |
+| `--smoke_test`   | False     | Use reduced computation for quick testing |
 
 Outputs:
 
@@ -170,9 +170,9 @@ Check that `--model_dir` points to the subdirectory created by `train_models.py`
 
 ## Notebook vs CLI
 
-| Feature       | Notebook               | CLI                     |
-| ------------- | ---------------------- | ----------------------- |
-| Best for      | Guided exploration     | Automation and scripting |
-| Interaction   | Step-by-step notebook  | Repeatable shell commands |
-| Visualization | Inline                 | Saved files and logs     |
-| Demo path     | `workshop_notebook.ipynb` | `demo_workflow.py`    |
+| Feature       | Notebook                  | CLI                       |
+| ------------- | ------------------------- | ------------------------- |
+| Best for      | Guided exploration        | Automation and scripting  |
+| Interaction   | Step-by-step notebook     | Repeatable shell commands |
+| Visualization | Inline                    | Saved files and logs      |
+| Demo path     | `workshop_notebook.ipynb` | `demo_workflow.py`        |

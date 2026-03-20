@@ -38,3 +38,15 @@ env/
 # Data files
 *.xlsx
 *.png
+
+# Tool specific
+.claude/
+.pytest_cache/
+.serena/
+.virtual_documents/
+
+# Runtime outputs
+results/
+models/*.pth
+models/*.pkl
+

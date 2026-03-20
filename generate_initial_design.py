@@ -73,7 +73,8 @@ def main():
         seed=args.seed,
         n_candidates=args.n_candidates,
         use_maximin=not args.no_maximin,
-        constraint_callable=constraint_callable
+        constraint_callable=constraint_callable,
+        solubilization_urea=ConstraintConfig.SOLUBILIZATION_UREA
     )
 
     final_samples = samples

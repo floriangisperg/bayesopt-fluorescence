@@ -87,12 +87,6 @@ class PathConfig:
     EXPERIMENTAL_PLAN_PATTERN: str = "{iteration}_experimental_plan.xlsx"
     MODEL_NAME_PATTERN: str = "gpytorch_singletaskgp_matern_25"
 
-    # Model file naming
-    MODEL1_NAME: str = "model1_delta_aew.pth"
-    MODEL2_NAME: str = "model2_p_proxy.pth"
-    SCALER1_NAME: str = "scaler1_delta_aew.pkl"
-    SCALER2_NAME: str = "scaler2_p_proxy.pkl"
-
 # Logging and debugging
 class LoggingConfig:
     """Configuration for logging and debugging."""
