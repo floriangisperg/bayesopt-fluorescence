@@ -28,6 +28,9 @@ dependencies:
   - jupyter>=1.0
   - ipykernel>=6.0
 
+  # Pip (required for pip packages below)
+  - pip
+
   # Pip packages (not well maintained in conda)
   - pip:
     - gpytorch>=1.11
