@@ -31,6 +31,15 @@ class ExperimentConfig:
         "Final Urea [M]"
     ]
 
+    # Transformation of Parameter-Range (must match PARAMETER_NAMES)
+    PARAMETER_TRANSFORMATION: Dict[str, str] = {
+        "DTT [mM]": {"model_space": "linear", "user_space": "none"},
+        "GSSG [mM]": {"model_space": "linear", "user_space": "none"},
+        "Dilution Factor": {"model_space": "1/x", "user_space": "1/x"},
+        "pH": {"model_space": "linear", "user_space": "none"},
+        "Final Urea [M]": {"model_space": "linear", "user_space": "none"},
+    }
+
     # Objective names (must match Excel columns)
     OBJECTIVE_NAMES: List[str] = [
         "Delta AEW",
