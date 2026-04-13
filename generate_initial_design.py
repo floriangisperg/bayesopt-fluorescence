@@ -19,6 +19,7 @@ import torch
 from config import ExperimentConfig, ConstraintConfig, get_transposed_bounds
 from acquisition.utils import save_experiments_to_excel, generate_initial_design
 from constraints.urea_dilution import urea_constraint_callable
+from data.transformation import build_transformer
 
 # Set up logging
 logging.basicConfig(
@@ -60,6 +61,9 @@ def main():
     # Get bounds from config (in BoTorch format: 2 x d tensor)
     bounds = get_transposed_bounds()
 
+    # Create transformer for parameter scaling (if needed)
+    transformer = build_transformer(ExperimentConfig)
+
     # Set up constraint callable if enabled
     constraint_callable = None
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
@@ -70,6 +74,7 @@ def main():
     samples = generate_initial_design(
         n_samples=args.n_samples,
         bounds=bounds,
+        transformer=transformer,
         seed=args.seed,
         n_candidates=args.n_candidates,
         use_maximin=not args.no_maximin,

@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import torch
 
+from data.transformation import ParameterTransformer
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,7 +94,7 @@ def denormalize_parameters(normalized_data: torch.Tensor,
     return normalized_data * (upper_bounds - lower_bounds) + lower_bounds
 
 
-def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
+def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer:ParameterTransformer,
                             dilution_idx: int = 2, urea_idx: int = 4,
                             solubilization_urea: float = 8.0,
                             seed: int = 42,
@@ -130,9 +132,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
     # Convert bounds to numpy for easier manipulation
     bounds_np = bounds.numpy() if isinstance(bounds, torch.Tensor) else bounds
 
-    # Get bounds for constrained parameters
-    dilution_lower = bounds_np[0, dilution_idx]
-    dilution_upper = bounds_np[1, dilution_idx]
+    # Get bounds for urea
     urea_lower = bounds_np[0, urea_idx]
     urea_upper = bounds_np[1, urea_idx]
 
@@ -147,18 +147,12 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
             samples_ind_unit = sampler_ind.random(n=n_samples)
 
             # Denormalize independent parameters to their actual bounds
-            samples_ind = np.zeros_like(samples_ind_unit)
-            for j, idx in enumerate(independent_idx):
-                range_j = bounds_np[1, idx] - bounds_np[0, idx]
-                samples_ind[:, j] = samples_ind_unit[:, j] * range_j + bounds_np[0, idx]
+            samples_ind = transformer.unit_to_physical_model(samples_ind_unit, cols=independent_idx)
 
         # Generate LHD for dilution factor (in unit space)
         sampler_dil = qmc.LatinHypercube(d=1, seed=rng.integers(2**31))
         samples_dil_unit = sampler_dil.random(n=n_samples).flatten()
-
-        # Denormalize dilution factor to get actual values
-        dilution_range = dilution_upper - dilution_lower
-        samples_dil = samples_dil_unit * dilution_range + dilution_lower
+        samples_dil = transformer.unit_to_physical_model(samples_dil_unit, cols=[dilution_idx])
 
         # For each dilution factor, compute feasible urea range and sample from it
         # Constraint: final_urea > solubilization_urea / dilution_factor
@@ -166,10 +160,9 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
 
         # Clip to parameter bounds
         min_feasible_urea = np.maximum(min_feasible_urea, urea_lower)
-        max_feasible_urea = urea_upper
 
         # Check if all samples are feasible
-        feasible = min_feasible_urea < max_feasible_urea
+        feasible = min_feasible_urea <= urea_upper
         if not np.all(feasible):
             logger.warning(f"Some samples have no feasible urea range (dilution too low)")
 
@@ -182,8 +175,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
         samples_urea = np.zeros(n_samples)
         for i in range(n_samples):
             urea_min = min_feasible_urea[i]
-            urea_max = max_feasible_urea
-            samples_urea[i] = samples_urea_unit[i] * (urea_max - urea_min) + urea_min
+            samples_urea[i] = samples_urea_unit[i] * (urea_upper - urea_min) + urea_min
 
         # Combine all samples
         samples = np.zeros((n_samples, n_dims))
@@ -206,11 +198,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
 
             # Calculate minimum pairwise distance in unit space for fair comparison
             # Normalize to unit space
-            samples_unit = np.zeros_like(candidate_samples)
-            for i in range(n_dims):
-                range_i = bounds_np[1, i] - bounds_np[0, i]
-                samples_unit[:, i] = (candidate_samples[:, i] - bounds_np[0, i]) / range_i
-
+            samples_unit = transformer.physical_to_unit_model(candidate_samples)
             min_dist = pdist(samples_unit).min()
 
             if min_dist > best_min_dist:
@@ -225,13 +213,13 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor,
     return samples
 
 
-def generate_initial_design(n_samples: int, bounds: torch.Tensor,
+def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: ParameterTransformer,
                           seed: int = 42,
                           n_candidates: int = 100,
                           use_maximin: bool = True,
                           constraint_callable: Callable = None,
                           oversampling_factor: int = 10,
-                          solubilization_urea: float = 8.0) -> torch.Tensor:
+                          solubilization_urea: float = 8.0)-> torch.Tensor:
     """Generate initial experimental design using Latin Hypercube Sampling.
 
     Supports constraint satisfaction via:
@@ -270,7 +258,8 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor,
         samples = generate_constrained_lhd(
             n_samples=n_samples,
             bounds=bounds,
-            dilution_idx=2,
+            transformer=transformer,
+            dilution_idx=2, #TODO: elimate hardcode idx, anzahl an constrained idx
             urea_idx=4,
             solubilization_urea=solubilization_urea,
             seed=seed,
@@ -298,9 +287,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor,
             batch_samples = sampler.random(n=batch_size)
 
             # Convert to tensor and denormalize for constraint checking
-            batch_tensor = denormalize_parameters(
-                torch.from_numpy(batch_samples).double(), bounds
-            )
+            batch_tensor = transformer.unit_to_physical_model(batch_samples)
 
             # Check constraint satisfaction
             constraint_values = constraint_callable(batch_tensor)
@@ -373,7 +360,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor,
         samples_unit = sampler.random(n=n_samples)
 
     # Denormalize to original bounds
-    samples = denormalize_parameters(torch.from_numpy(samples_unit).double(), bounds)
+    samples = transformer.unit_to_physical_model(samples_unit)
 
     logger.info(f"Generated initial design with {n_samples} samples")
     return samples
