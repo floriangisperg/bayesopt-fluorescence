@@ -147,12 +147,12 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer:P
             samples_ind_unit = sampler_ind.random(n=n_samples)
 
             # Denormalize independent parameters to their actual bounds
-            samples_ind = transformer.unit_to_physical_model(samples_ind_unit, cols=independent_idx)
+            samples_ind = transformer.unit_to_physical_user(samples_ind_unit, cols=independent_idx)
 
         # Generate LHD for dilution factor (in unit space)
         sampler_dil = qmc.LatinHypercube(d=1, seed=rng.integers(2**31))
         samples_dil_unit = sampler_dil.random(n=n_samples).flatten()
-        samples_dil = transformer.unit_to_physical_model(samples_dil_unit, cols=[dilution_idx])
+        samples_dil = transformer.unit_to_physical_user(samples_dil_unit, cols=[dilution_idx])
 
         # For each dilution factor, compute feasible urea range and sample from it
         # Constraint: final_urea > solubilization_urea / dilution_factor
@@ -198,7 +198,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer:P
 
             # Calculate minimum pairwise distance in unit space for fair comparison
             # Normalize to unit space
-            samples_unit = transformer.physical_to_unit_model(candidate_samples)
+            samples_unit = transformer.physical_to_unit_user(candidate_samples)
             min_dist = pdist(samples_unit).min()
 
             if min_dist > best_min_dist:
@@ -287,7 +287,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
             batch_samples = sampler.random(n=batch_size)
 
             # Convert to tensor and denormalize for constraint checking
-            batch_tensor = transformer.unit_to_physical_model(batch_samples)
+            batch_tensor = transformer.unit_to_physical_user(batch_samples)
 
             # Check constraint satisfaction
             constraint_values = constraint_callable(batch_tensor)
@@ -360,7 +360,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
         samples_unit = sampler.random(n=n_samples)
 
     # Denormalize to original bounds
-    samples = transformer.unit_to_physical_model(samples_unit)
+    samples = transformer.unit_to_physical_user(samples_unit)
 
     logger.info(f"Generated initial design with {n_samples} samples")
     return samples
