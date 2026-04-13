@@ -73,9 +73,9 @@ def load_trained_models(model_dir: str, train_x: torch.Tensor, train_y: torch.Te
 def main():
     """Main optimization loop."""
     parser = argparse.ArgumentParser(description='Run Bayesian optimization loop')
-    parser.add_argument('--data_file', type=str,default='/Users/Pauli/Documents/Uni/Arbeit_2/Code_file/bayesopt-fluorescence/workshop_results/my_first_campaign/Iteration_0_experimental_plan.xlsx', #required=True,
+    parser.add_argument('--data_file', type=str, required=True,
                        help='Excel file with existing experimental data')
-    parser.add_argument('--model_dir', type=str, default='/Users/Pauli/Documents/Uni/Arbeit_2/Code_file/bayesopt-fluorescence/models/gpytorch_models', # required=True,
+    parser.add_argument('--model_dir', type=str, required=True,
                        help='Directory containing trained models')
     parser.add_argument('--output_dir', type=str, default='results',
                        help='Output directory for new experiments')
