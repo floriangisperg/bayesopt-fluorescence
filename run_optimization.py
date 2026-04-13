@@ -16,13 +16,13 @@ import pandas as pd
 import torch
 from botorch.models import ModelListGP
 from botorch.sampling import SobolQMCNormalSampler
-from botorch.utils.transforms import unnormalize
 
 from config import (
     ExperimentConfig, OptimizationConfig, ModelConfig, ConstraintConfig,
     get_bounds_tensor, get_transposed_bounds, get_normalized_bounds, get_optimization_params
 )
 from data.preprocessing import prepare_data, load_scalers, inverse_transform_objectives
+from data.transformation import build_transformer
 from models import GPModel, load_gp_model
 from acquisition import create_qnehvi_acquisition, optimize_qnehvi, get_urea_constraint_callable
 from acquisition.utils import update_experimental_database
@@ -73,15 +73,15 @@ def load_trained_models(model_dir: str, train_x: torch.Tensor, train_y: torch.Te
 def main():
     """Main optimization loop."""
     parser = argparse.ArgumentParser(description='Run Bayesian optimization loop')
-    parser.add_argument('--data_file', type=str, required=True,
+    parser.add_argument('--data_file', type=str,default='/Users/Pauli/Documents/Uni/Arbeit_2/Code_file/bayesopt-fluorescence/workshop_results/my_first_campaign/Iteration_0_experimental_plan.xlsx', #required=True,
                        help='Excel file with existing experimental data')
-    parser.add_argument('--model_dir', type=str, required=True,
+    parser.add_argument('--model_dir', type=str, default='/Users/Pauli/Documents/Uni/Arbeit_2/Code_file/bayesopt-fluorescence/models/gpytorch_models', # required=True,
                        help='Directory containing trained models')
     parser.add_argument('--output_dir', type=str, default='results',
                        help='Output directory for new experiments')
     parser.add_argument('--n_candidates', type=int, default=4,
                        help='Number of new candidates to generate')
-    parser.add_argument('--iteration', type=int, required=True,
+    parser.add_argument('--iteration', type=int, default='0', #required=True,
                        help='Current iteration number')
     parser.add_argument('--smoke_test', action='store_true',
                        help='Run in smoke test mode (reduced computation)')
@@ -215,7 +215,7 @@ def main():
     try:
         logger.info("Predicting performance for new candidates...")
         with torch.no_grad():
-            candidate_normalized = (final_candidates - bounds_tensor[0]) / (bounds_tensor[1] - bounds_tensor[0])
+            candidate_normalized = transformer.physical_to_unit_model(final_candidates, as_tensor= True)
             candidate_normalized = candidate_normalized.double()
             predictions = multi_model(candidate_normalized)
 
