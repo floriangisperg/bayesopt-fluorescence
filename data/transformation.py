@@ -131,21 +131,22 @@ class ParameterTransformer:
     @staticmethod
     def _as_2d(x: ArrayLike) -> tuple[ArrayLike, bool]:
         if torch.is_tensor(x):
-            if x.ndim == 1:
-                return x.unsqueeze(1), True
-            if x.ndim == 2:
-                return x, False
+            xt = x.double()
         else:
-            x = np.asarray(x, dtype=float)
-            if x.ndim == 1:
-                return x[:, None], True
-            if x.ndim == 2:
-                return x, False
+            xt = torch.as_tensor(x, dtype=torch.float64)
+
+        if xt.ndim == 1:
+            return xt.unsqueeze(1), True
+        if xt.ndim == 2:
+            return xt, False
         raise ValueError("Expected shape (n,) for one parameter or (n, d) for multiple parameters.")
 
     @staticmethod
-    def _restore_shape(x: ArrayLike, squeeze: bool) -> ArrayLike:
-        return x[:, 0] if squeeze else x
+    def _restore_shape(x: ArrayLike, squeeze: bool, as_tensor: bool) -> ArrayLike:
+        x = x[:, 0] if squeeze else x
+        if as_tensor:
+            return x
+        return x.detach().cpu().numpy()
 
     def _resolve_cols(self, cols: List[int]) -> List[int]:
         if cols is None:
@@ -153,41 +154,41 @@ class ParameterTransformer:
         else:
             return cols
 
-    def physical_to_unit_model(self, x: ArrayLike, cols: List = None) -> ArrayLike:
+    def physical_to_unit_model(self, x: ArrayLike, cols: List = None, as_tensor: bool = False) -> ArrayLike:
         x2d, squeeze = self._as_2d(x)
         cols = self._resolve_cols(cols)
         z = x2d.clone() if torch.is_tensor(x2d) else x2d.copy()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
             z[:, local_i] = spec.model_transform.physical_to_unit(x2d[:, local_i])
-        return self._restore_shape(z, squeeze)
+        return self._restore_shape(z, squeeze, as_tensor)
 
-    def unit_to_physical_model(self, z: ArrayLike, cols: List = None) -> ArrayLike:
+    def unit_to_physical_model(self, z: ArrayLike, cols: List = None, as_tensor: bool = False) -> ArrayLike:
         z2d, squeeze = self._as_2d(z)
         cols = self._resolve_cols(cols)
         x = z2d.clone() if torch.is_tensor(z2d) else z2d.copy()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
             x[:, local_i] = spec.model_transform.unit_to_physical(z2d[:, local_i])
-        return self._restore_shape(x, squeeze)
+        return self._restore_shape(x, squeeze, as_tensor)
 
-    def physical_to_unit_user(self, x: ArrayLike, cols: List = None) -> ArrayLike:
+    def physical_to_unit_user(self, x: ArrayLike, cols: List = None, as_tensor: bool = False) -> ArrayLike:
         x2d, squeeze = self._as_2d(x)
         cols = self._resolve_cols(cols)
         z = x2d.clone() if torch.is_tensor(x2d) else x2d.copy()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
             z[:, local_i] = spec.user_transform.physical_to_unit(x2d[:, local_i])
-        return self._restore_shape(z, squeeze)
+        return self._restore_shape(z, squeeze, as_tensor)
 
-    def unit_to_physical_user(self, z: ArrayLike, cols: List = None) -> ArrayLike:
+    def unit_to_physical_user(self, z: ArrayLike, cols: List = None, as_tensor: bool = False) -> ArrayLike:
         z2d, squeeze = self._as_2d(z)
         cols = self._resolve_cols(cols)
         x = z2d.clone() if torch.is_tensor(z2d) else z2d.copy()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
             x[:, local_i] = spec.user_transform.unit_to_physical(z2d[:, local_i])
-        return self._restore_shape(x, squeeze)
+        return self._restore_shape(x, squeeze, as_tensor)
 
     def get_physical_bounds(self, as_tensor: bool = False) -> ArrayLike:
         bounds = np.stack([self._lower_bound, self._upper_bound], axis=0)
