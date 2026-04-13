@@ -81,7 +81,7 @@ def main():
                        help='Output directory for new experiments')
     parser.add_argument('--n_candidates', type=int, default=4,
                        help='Number of new candidates to generate')
-    parser.add_argument('--iteration', type=int, default='0', #required=True,
+    parser.add_argument('--iteration', type=int, required=True,
                        help='Current iteration number')
     parser.add_argument('--smoke_test', action='store_true',
                        help='Run in smoke test mode (reduced computation)')
