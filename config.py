@@ -33,11 +33,11 @@ class ExperimentConfig:
 
     # Transformation of Parameter-Range (must match PARAMETER_NAMES)
     PARAMETER_TRANSFORMATION: Dict[str, str] = {
-        "DTT [mM]": {"model_space": "linear", "user_space": "none"},
-        "GSSG [mM]": {"model_space": "linear", "user_space": "none"},
-        "Dilution Factor": {"model_space": "1/x", "user_space": "1/x"},
-        "pH": {"model_space": "linear", "user_space": "none"},
-        "Final Urea [M]": {"model_space": "linear", "user_space": "none"},
+        "DTT [mM]":             {"user_space": "linear",    "model_space": "linear"},
+        "GSSG [mM]":            {"user_space": "linear",    "model_space": "linear"},
+        "Dilution Factor":      {"user_space": "1/x",       "model_space": "1/x"},
+        "pH":                   {"user_space": "linear",    "model_space": "linear"},
+        "Final Urea [M]":       {"user_space": "linear",    "model_space": "linear"},
     }
 
     # Objective names (must match Excel columns)
