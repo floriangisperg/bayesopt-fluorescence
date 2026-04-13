@@ -94,7 +94,7 @@ def denormalize_parameters(normalized_data: torch.Tensor,
     return normalized_data * (upper_bounds - lower_bounds) + lower_bounds
 
 
-def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer:ParameterTransformer,
+def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: ParameterTransformer,
                             dilution_idx: int = 2, urea_idx: int = 4,
                             solubilization_urea: float = 8.0,
                             seed: int = 42,
@@ -113,6 +113,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer:P
     Args:
         n_samples: Number of samples to generate.
         bounds: Parameter bounds (2 x d tensor).
+        transformer: Parameter transformer object.
         dilution_idx: Index of dilution factor parameter.
         urea_idx: Index of final urea parameter.
         solubilization_urea: Urea concentration in solubilization buffer (M).
@@ -229,6 +230,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
     Args:
         n_samples: Number of initial samples to generate.
         bounds: Parameter bounds (2 x d tensor).
+        transformer: Parameter transformer object.
         seed: Random seed for reproducibility.
         n_candidates: Number of candidate designs to evaluate for maximin criterion.
         use_maximin: Whether to apply maximin criterion optimization.

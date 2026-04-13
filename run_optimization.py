@@ -110,8 +110,8 @@ def main():
     logger.info(f"Loaded {len(df)} existing experiments")
 
     # Prepare data
-    bounds = ExperimentConfig.PARAMETER_BOUNDS
-    train_x_normalized, train_y_standardized, scalers = prepare_data(X_raw, y_raw, bounds)
+    transformer = build_transformer(ExperimentConfig)
+    train_x_normalized, train_y_standardized, scalers = prepare_data(X_raw, y_raw, transformer)
 
     # Load trained models
     logger.info("Loading trained models...")
@@ -155,7 +155,7 @@ def main():
     )
 
     # Denormalize candidates using botorch's unnormalize
-    candidates_original = unnormalize(candidates_normalized, bounds_tensor)
+    candidates_original = transformer.unit_to_physical_user(candidates_normalized.numpy(), as_tensor=True)
 
     # The optimizer should return feasible points already. Keep a repair fallback
     # for numerical edge cases or future constraint changes.
