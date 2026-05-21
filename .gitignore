@@ -49,4 +49,6 @@ env/
 results/
 models/*.pth
 models/*.pkl
+test_results/
+workshop/workshop_results/
 
