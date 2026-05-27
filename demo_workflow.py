@@ -31,8 +31,8 @@ from data.preprocessing import prepare_data
 from models import GPModel, fit_gp_model, save_gp_model, load_gp_model
 from botorch.models import ModelListGP
 from botorch.sampling import SobolQMCNormalSampler
-from botorch.utils.transforms import unnormalize
 from acquisition import create_qnehvi_acquisition, optimize_qnehvi
+from data.transformation import build_transformer
 
 # Set up logging
 logging.basicConfig(
@@ -118,9 +118,11 @@ def generate_initial_design_with_mock_results(
     bounds = torch.stack([bounds_config[:, 0], bounds_config[:, 1]]).double()
 
     # Generate initial design using LHS
+    transformer = build_transformer(ExperimentConfig)
     samples = generate_initial_design(
         n_samples=n_samples,
         bounds=bounds,
+        transformer=transformer,
         seed=seed,
         n_candidates=50,  # Reduced for testing
         use_maximin=True
@@ -171,12 +173,11 @@ def train_gp_models(
     # Prepare training data
     parameter_names = ExperimentConfig.PARAMETER_NAMES
     objective_names = ExperimentConfig.OBJECTIVE_NAMES
-    bounds = ExperimentConfig.PARAMETER_BOUNDS
-
     X_raw = df[parameter_names].to_numpy()
     y_raw = df[objective_names].to_numpy()
 
-    train_x_normalized, train_y_standardized, scalers = prepare_data(X_raw, y_raw, bounds)
+    transformer = build_transformer(ExperimentConfig)
+    train_x_normalized, train_y_standardized, scalers = prepare_data(X_raw, y_raw, transformer)
 
     # Create model save directory
     os.makedirs(model_save_dir, exist_ok=True)
@@ -239,7 +240,8 @@ def run_bayesian_optimization(
 
     # Prepare data
     bounds = ExperimentConfig.PARAMETER_BOUNDS
-    train_x_normalized, train_y_standardized, _ = prepare_data(X_raw, y_raw, bounds)
+    transformer = build_transformer(ExperimentConfig)
+    train_x_normalized, train_y_standardized, _ = prepare_data(X_raw, y_raw, transformer)
 
     # Ensure float64 dtype for consistency
     train_x_normalized = train_x_normalized.double()
@@ -282,11 +284,6 @@ def run_bayesian_optimization(
     )
 
     # Create acquisition function
-    bounds_tensor = torch.tensor(
-        [bounds[:, 0].tolist(), bounds[:, 1].tolist()],
-        dtype=torch.float64
-    )
-
     normalized_bounds = torch.stack([
         torch.zeros(bounds.shape[0], dtype=torch.float64),
         torch.ones(bounds.shape[0], dtype=torch.float64)
@@ -311,8 +308,8 @@ def run_bayesian_optimization(
         sequential=True
     )
 
-    # Denormalize candidates
-    candidates_original = unnormalize(candidates_normalized, bounds_tensor)
+    # Convert model-space candidates back to physical units
+    candidates_original = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True)
 
     # Apply physical constraints
     candidates_list = [candidate.numpy() for candidate in candidates_original]
