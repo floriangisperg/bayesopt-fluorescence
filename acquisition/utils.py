@@ -289,7 +289,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
             batch_samples = sampler.random(n=batch_size)
 
             # Convert to tensor and denormalize for constraint checking
-            batch_tensor = transformer.unit_to_physical_user(batch_samples)
+            batch_tensor = transformer.unit_to_physical_user(batch_samples, as_tensor=True)
 
             # Check constraint satisfaction
             constraint_values = constraint_callable(batch_tensor)
@@ -362,7 +362,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
         samples_unit = sampler.random(n=n_samples)
 
     # Denormalize to original bounds
-    samples = transformer.unit_to_physical_user(samples_unit)
+    samples = transformer.unit_to_physical_user(samples_unit, as_tensor=True)
 
     logger.info(f"Generated initial design with {n_samples} samples")
     return samples

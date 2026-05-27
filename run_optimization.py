@@ -155,7 +155,7 @@ def main():
     )
 
     # Denormalize candidates using botorch's unnormalize
-    candidates_original = transformer.unit_to_physical_user(candidates_normalized.numpy(), as_tensor=True)
+    candidates_original = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True)
 
     # The optimizer should return feasible points already. Keep a repair fallback
     # for numerical edge cases or future constraint changes.
