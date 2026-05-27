@@ -7,7 +7,12 @@ to improve maintainability and reproducibility.
 
 import numpy as np
 import torch
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, TypedDict
+
+
+class ParameterTransformation(TypedDict):
+    user_space: str
+    model_space: str
 
 # Experiment parameters
 class ExperimentConfig:
@@ -32,7 +37,7 @@ class ExperimentConfig:
     ]
 
     # Transformation of Parameter-Range (must match PARAMETER_NAMES)
-    PARAMETER_TRANSFORMATION: Dict[str, Dict[str, str]] = {
+    PARAMETER_TRANSFORMATION: Dict[str, ParameterTransformation] = {
         "DTT [mM]":             {"user_space": "linear",    "model_space": "linear"},
         "GSSG [mM]":            {"user_space": "linear",    "model_space": "linear"},
         "Dilution Factor":      {"user_space": "1/x",       "model_space": "1/x"},

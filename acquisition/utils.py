@@ -172,11 +172,15 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: 
         sampler_urea = qmc.LatinHypercube(d=1, seed=rng.integers(2**31))
         samples_urea_unit = sampler_urea.random(n=n_samples).flatten()
 
-        # Transform unit samples to feasible ranges
-        samples_urea = np.zeros(n_samples)
-        for i in range(n_samples):
-            urea_min = min_feasible_urea[i]
-            samples_urea[i] = samples_urea_unit[i] * (urea_upper - urea_min) + urea_min
+        # Transform unit samples to feasible ranges in user unit space
+        min_feasible_urea_user = transformer.physical_to_unit_user(
+            min_feasible_urea, cols=[urea_idx]
+        )
+        urea_upper_user = float(
+            transformer.physical_to_unit_user(np.array([urea_upper]), cols=[urea_idx])[0]
+        )
+        samples_urea_user = samples_urea_unit * (urea_upper_user - min_feasible_urea_user) + min_feasible_urea_user
+        samples_urea = transformer.unit_to_physical_user(samples_urea_user, cols=[urea_idx])
 
         # Combine all samples
         samples = np.zeros((n_samples, n_dims))
@@ -296,7 +300,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
             feasible_mask = constraint_values > 0
 
             # Keep feasible samples (in unit space)
-            feasible_samples_unit = batch_samples[feasible_mask.numpy()]
+            feasible_samples_unit = batch_samples[feasible_mask.cpu().numpy()]
             all_samples_unit.append(feasible_samples_unit)
 
             attempts += 1

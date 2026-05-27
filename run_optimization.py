@@ -19,12 +19,12 @@ from botorch.sampling import SobolQMCNormalSampler
 
 from config import (
     ExperimentConfig, OptimizationConfig, ModelConfig, ConstraintConfig,
-    get_bounds_tensor, get_transposed_bounds, get_normalized_bounds, get_optimization_params
+    get_normalized_bounds, get_optimization_params
 )
 from data.preprocessing import prepare_data, load_scalers, inverse_transform_objectives
 from data.transformation import build_transformer
 from models import GPModel, load_gp_model
-from acquisition import create_qnehvi_acquisition, optimize_qnehvi, get_urea_constraint_callable
+from acquisition import create_qnehvi_acquisition, optimize_qnehvi
 from acquisition.utils import update_experimental_database
 from constraints import correct_constraints_iterative
 
@@ -119,7 +119,6 @@ def main():
 
     # Get optimization parameters
     opt_params = get_optimization_params()
-    bounds_tensor = get_transposed_bounds()
     normalized_bounds = get_normalized_bounds(num_features=train_x_normalized.shape[1])
 
     # Initialize SobolQMCNormalSampler for better MC sampling
@@ -141,7 +140,13 @@ def main():
     nonlinear_inequality_constraints = None
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        nonlinear_inequality_constraints = [get_urea_constraint_callable(bounds=bounds_tensor)]
+        def model_space_urea_constraint(samples: torch.Tensor) -> torch.Tensor:
+            samples_physical = transformer.unit_to_physical_model(samples, as_tensor=True)
+            final_urea = samples_physical[..., ConstraintConfig.FINAL_UREA_IDX]
+            dilution_factor = samples_physical[..., ConstraintConfig.DILUTION_FACTOR_IDX]
+            return final_urea * dilution_factor - ConstraintConfig.SOLUBILIZATION_UREA
+
+        nonlinear_inequality_constraints = [(model_space_urea_constraint, True)]
 
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {args.n_candidates} candidates...")
@@ -154,7 +159,7 @@ def main():
         **opt_params
     )
 
-    # Denormalize candidates using botorch's unnormalize
+    # Convert model-space candidates back to physical units
     candidates_original = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True)
 
     # The optimizer should return feasible points already. Keep a repair fallback

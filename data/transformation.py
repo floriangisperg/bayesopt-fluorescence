@@ -179,7 +179,6 @@ class LogitScaler(BaseTransformation):
 
 
 TRANSFORM_REGISTRY = {
-    "none": IdentityTransform,
     "linear": LinearScaler,
     "1/x": ReciprocalScaler,
     "reciprocal": ReciprocalScaler,
