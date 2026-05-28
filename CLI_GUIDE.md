@@ -7,23 +7,23 @@ For installation, project overview, configuration, and the canonical explanation
 ## Prerequisite
 
 ```bash
-conda activate bayesopt-fluorescence
+uv sync
 ```
 
 ## Quick Reference
 
-| Step                       | Command                             |
-| -------------------------- | ----------------------------------- |
-| 1. Generate initial design | `python generate_initial_design.py` |
-| 2. Fill in results         | manual Excel editing                |
-| 3. Train models            | `python train_models.py`            |
-| 4. Get suggestions         | `python run_optimization.py`        |
-| 5. Repeat                  | continue from step 2                |
+| Step                       | Command                                      |
+| -------------------------- | -------------------------------------------- |
+| 1. Generate initial design | `uv run python generate_initial_design.py`   |
+| 2. Fill in results         | manual Excel editing                         |
+| 3. Train models            | `uv run python train_models.py`              |
+| 4. Get suggestions         | `uv run python run_optimization.py`          |
+| 5. Repeat                  | continue from step 2                         |
 
 ## Step 1: Generate the Initial Design
 
 ```bash
-python generate_initial_design.py \
+uv run python generate_initial_design.py \
     --n_samples 12 \
     --output_dir results \
     --project_name iteration_0 \
@@ -62,7 +62,7 @@ Training requires both objective columns to contain values.
 ## Step 3: Train GP Models
 
 ```bash
-python train_models.py \
+uv run python train_models.py \
     --data_file results/iteration_0_experimental_plan.xlsx \
     --model_dir models \
     --project_name iteration_0_models
@@ -86,7 +86,7 @@ Typical outputs:
 ## Step 4: Generate the Next Batch
 
 ```bash
-python run_optimization.py \
+uv run python run_optimization.py \
     --data_file results/iteration_0_experimental_plan.xlsx \
     --model_dir models/iteration_0_models \
     --output_dir results \
@@ -123,20 +123,20 @@ After you finish the next batch of experiments, append the completed rows to a m
 Example:
 
 ```bash
-python -c "import pandas as pd; df0 = pd.read_excel('results/iteration_0_experimental_plan.xlsx'); df1 = pd.read_excel('results/Iteration_1/Iteration_1_experimental_plan.xlsx'); pd.concat([df0, df1], ignore_index=True).to_excel('results/combined_iteration_1.xlsx', index=False)"
+uv run python -c "import pandas as pd; df0 = pd.read_excel('results/iteration_0_experimental_plan.xlsx'); df1 = pd.read_excel('results/Iteration_1/Iteration_1_experimental_plan.xlsx'); pd.concat([df0, df1], ignore_index=True).to_excel('results/combined_iteration_1.xlsx', index=False)"
 ```
 
 Then retrain and generate the next suggestions:
 
 ```bash
-python train_models.py \
+uv run python train_models.py \
     --data_file results/combined_iteration_1.xlsx \
     --model_dir models \
     --project_name iteration_1_models
 ```
 
 ```bash
-python run_optimization.py \
+uv run python run_optimization.py \
     --data_file results/combined_iteration_1.xlsx \
     --model_dir models/iteration_1_models \
     --output_dir results \
@@ -149,7 +149,7 @@ python run_optimization.py \
 To exercise the full workflow with synthetic data:
 
 ```bash
-python demo_workflow.py --n_iterations 5 --n_initial 12 --n_candidates 4
+uv run python workshop/demo_workflow.py --n_iterations 5 --n_initial 12 --n_candidates 4
 ```
 
 ## Troubleshooting
@@ -157,7 +157,7 @@ python demo_workflow.py --n_iterations 5 --n_initial 12 --n_candidates 4
 ### Module import errors
 
 ```bash
-conda activate bayesopt-fluorescence
+uv sync
 ```
 
 ### Missing required columns
@@ -170,9 +170,9 @@ Check that `--model_dir` points to the subdirectory created by `train_models.py`
 
 ## Notebook vs CLI
 
-| Feature       | Notebook                  | CLI                       |
-| ------------- | ------------------------- | ------------------------- |
-| Best for      | Guided exploration        | Automation and scripting  |
-| Interaction   | Step-by-step notebook     | Repeatable shell commands |
-| Visualization | Inline                    | Saved files and logs      |
-| Demo path     | `workshop_notebook.ipynb` | `demo_workflow.py`        |
+| Feature       | Notebook                            | CLI                                  |
+| ------------- | ----------------------------------- | ------------------------------------ |
+| Best for      | Guided exploration                  | Automation and scripting             |
+| Interaction   | Step-by-step notebook               | Repeatable shell commands            |
+| Visualization | Inline                              | Saved files and logs                 |
+| Demo path     | `workshop/workshop_notebook.ipynb`  | `workshop/demo_workflow.py`          |

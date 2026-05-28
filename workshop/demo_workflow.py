@@ -23,6 +23,11 @@ import numpy as np
 import pandas as pd
 import torch
 
+# Ensure project root is on the path when running from the workshop/ directory
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 # Import project modules
 from config import ExperimentConfig, ModelConfig, OptimizationConfig
 from acquisition.utils import generate_initial_design
