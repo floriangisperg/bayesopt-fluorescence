@@ -19,24 +19,6 @@ from data.transformation import ParameterTransformer
 logger = logging.getLogger(__name__)
 
 
-def normalize_parameters(X: np.ndarray, bounds: np.ndarray) -> torch.Tensor:
-    """Normalize experimental parameters to [0,1] range.
-
-    Args:
-        X: Raw experimental parameters (n_samples x n_features).
-        bounds: Parameter bounds (n_features x 2) with [lower, upper].
-
-    Returns:
-        Normalized parameters as torch tensor.
-    """
-    lower_bounds = bounds[:, 0]
-    upper_bounds = bounds[:, 1]
-
-    X_normalized = (X - lower_bounds) / (upper_bounds - lower_bounds)
-
-    return torch.from_numpy(X_normalized).double()
-
-
 def standardize_objectives(y: np.ndarray) -> Tuple[torch.Tensor, List[StandardScaler]]:
     """Standardize objective values to zero mean and unit variance.
 

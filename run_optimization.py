@@ -141,9 +141,16 @@ def main():
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
         def model_space_urea_constraint(samples: torch.Tensor) -> torch.Tensor:
-            samples_physical = transformer.unit_to_physical_model(samples, as_tensor=True)
-            final_urea = samples_physical[..., ConstraintConfig.FINAL_UREA_IDX]
-            dilution_factor = samples_physical[..., ConstraintConfig.DILUTION_FACTOR_IDX]
+            pair = torch.stack([
+                samples[..., ConstraintConfig.DILUTION_FACTOR_IDX],
+                samples[..., ConstraintConfig.FINAL_UREA_IDX],
+            ], dim=-1)
+            pair_physical = transformer.unit_to_physical_model(
+                pair, cols=[ConstraintConfig.DILUTION_FACTOR_IDX, ConstraintConfig.FINAL_UREA_IDX],
+                as_tensor=True
+            )
+            dilution_factor = pair_physical[..., 0]
+            final_urea = pair_physical[..., 1]
             return final_urea * dilution_factor - ConstraintConfig.SOLUBILIZATION_UREA
 
         nonlinear_inequality_constraints = [(model_space_urea_constraint, True)]

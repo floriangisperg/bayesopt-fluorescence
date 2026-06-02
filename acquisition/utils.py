@@ -77,23 +77,6 @@ def update_experimental_database(new_experiments: pd.DataFrame,
     return updated_df
 
 
-def denormalize_parameters(normalized_data: torch.Tensor,
-                          bounds: torch.Tensor) -> torch.Tensor:
-    """Denormalize parameters from [0,1] to original bounds.
-
-    Args:
-        normalized_data: Normalized parameter data.
-        bounds: Original bounds (2 x d tensor).
-
-    Returns:
-        Denormalized parameter data.
-    """
-    lower_bounds = bounds[0]
-    upper_bounds = bounds[1]
-
-    return normalized_data * (upper_bounds - lower_bounds) + lower_bounds
-
-
 def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: ParameterTransformer,
                             dilution_idx: int = 2, urea_idx: int = 4,
                             solubilization_urea: float = 8.0,

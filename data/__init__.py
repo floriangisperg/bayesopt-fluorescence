@@ -5,7 +5,6 @@ Contains utilities for data preprocessing, normalization, and transformation.
 """
 
 from .preprocessing import (
-    normalize_parameters,
     standardize_objectives,
     prepare_data,
     save_scalers,
@@ -26,7 +25,6 @@ from .transformation import (
 )
 
 __all__ = [
-    'normalize_parameters',
     'standardize_objectives',
     'prepare_data',
     'save_scalers',

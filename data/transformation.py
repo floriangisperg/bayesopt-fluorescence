@@ -225,6 +225,12 @@ class ParameterTransformer:
         self.parameter_bounds = np.asarray(parameter_bounds, dtype=np.float64)
         self.parameter_transforms = parameter_transforms
 
+        if self.parameter_bounds.ndim != 2 or self.parameter_bounds.shape[1] != 2:
+            raise ValueError(
+                f"parameter_bounds must have shape (N, 2), got {self.parameter_bounds.shape}. "
+                "Each row should be [lower_bound, upper_bound]."
+            )
+
         if set(self.parameter_names) != set(self.parameter_transforms.keys()):
             raise ValueError("Items in PARAMETER_TRANSFORMATION must match PARAMETER_NAMES (config.py)")
 
