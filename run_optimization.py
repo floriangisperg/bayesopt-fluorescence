@@ -16,15 +16,15 @@ import pandas as pd
 import torch
 from botorch.models import ModelListGP
 from botorch.sampling import SobolQMCNormalSampler
-from botorch.utils.transforms import unnormalize
 
 from config import (
     ExperimentConfig, OptimizationConfig, ModelConfig, ConstraintConfig,
-    get_bounds_tensor, get_transposed_bounds, get_normalized_bounds, get_optimization_params
+    get_normalized_bounds, get_optimization_params
 )
 from data.preprocessing import prepare_data, load_scalers, inverse_transform_objectives
+from data.transformation import build_transformer
 from models import GPModel, load_gp_model
-from acquisition import create_qnehvi_acquisition, optimize_qnehvi, get_urea_constraint_callable
+from acquisition import create_qnehvi_acquisition, optimize_qnehvi
 from acquisition.utils import update_experimental_database
 from constraints import correct_constraints_iterative
 
@@ -110,8 +110,8 @@ def main():
     logger.info(f"Loaded {len(df)} existing experiments")
 
     # Prepare data
-    bounds = ExperimentConfig.PARAMETER_BOUNDS
-    train_x_normalized, train_y_standardized, scalers = prepare_data(X_raw, y_raw, bounds)
+    transformer = build_transformer(ExperimentConfig)
+    train_x_normalized, train_y_standardized, scalers = prepare_data(X_raw, y_raw, transformer)
 
     # Load trained models
     logger.info("Loading trained models...")
@@ -119,7 +119,6 @@ def main():
 
     # Get optimization parameters
     opt_params = get_optimization_params()
-    bounds_tensor = get_transposed_bounds()
     normalized_bounds = get_normalized_bounds(num_features=train_x_normalized.shape[1])
 
     # Initialize SobolQMCNormalSampler for better MC sampling
@@ -141,7 +140,20 @@ def main():
     nonlinear_inequality_constraints = None
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        nonlinear_inequality_constraints = [get_urea_constraint_callable(bounds=bounds_tensor)]
+        def model_space_urea_constraint(samples: torch.Tensor) -> torch.Tensor:
+            pair = torch.stack([
+                samples[..., ConstraintConfig.DILUTION_FACTOR_IDX],
+                samples[..., ConstraintConfig.FINAL_UREA_IDX],
+            ], dim=-1)
+            pair_physical = transformer.unit_to_physical_model(
+                pair, cols=[ConstraintConfig.DILUTION_FACTOR_IDX, ConstraintConfig.FINAL_UREA_IDX],
+                as_tensor=True
+            )
+            dilution_factor = pair_physical[..., 0]
+            final_urea = pair_physical[..., 1]
+            return final_urea * dilution_factor - ConstraintConfig.SOLUBILIZATION_UREA
+
+        nonlinear_inequality_constraints = [(model_space_urea_constraint, True)]
 
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {args.n_candidates} candidates...")
@@ -154,8 +166,8 @@ def main():
         **opt_params
     )
 
-    # Denormalize candidates using botorch's unnormalize
-    candidates_original = unnormalize(candidates_normalized, bounds_tensor)
+    # Convert model-space candidates back to physical units
+    candidates_original = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True)
 
     # The optimizer should return feasible points already. Keep a repair fallback
     # for numerical edge cases or future constraint changes.
@@ -215,7 +227,7 @@ def main():
     try:
         logger.info("Predicting performance for new candidates...")
         with torch.no_grad():
-            candidate_normalized = (final_candidates - bounds_tensor[0]) / (bounds_tensor[1] - bounds_tensor[0])
+            candidate_normalized = transformer.physical_to_unit_model(final_candidates, as_tensor= True)
             candidate_normalized = candidate_normalized.double()
             predictions = multi_model(candidate_normalized)
 

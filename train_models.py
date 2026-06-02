@@ -16,6 +16,7 @@ import torch
 
 from config import ExperimentConfig, ModelConfig, PathConfig
 from data.preprocessing import prepare_data
+from data.transformation import ParameterTransformer, build_transformer
 from models import GPModel, fit_gp_model, save_gp_model, loocv_gp_model
 
 # Set up logging
@@ -50,23 +51,23 @@ def load_experimental_data(data_file: str) -> pd.DataFrame:
     return df
 
 
-def train_objective_models(df: pd.DataFrame, model_save_dir: str):
+def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer,  model_save_dir: str):
     """Train GP models for each objective.
 
     Args:
         df: Experimental data.
+        transformer: ParameterTransformer object.
         model_save_dir: Directory to save trained models.
     """
     # Prepare training data
     parameter_names = ExperimentConfig.PARAMETER_NAMES
     objective_names = ExperimentConfig.OBJECTIVE_NAMES
-    bounds = ExperimentConfig.PARAMETER_BOUNDS
 
     logger.info("Preparing training data...")
-    X_raw = df[parameter_names].to_numpy()
+    x_raw = df[parameter_names].to_numpy()
     y_raw = df[objective_names].to_numpy()
 
-    train_x_normalized, train_y_standardized, scalers = prepare_data(X_raw, y_raw, bounds)
+    train_x_normalized, train_y_standardized, scalers = prepare_data(x_raw, y_raw, transformer)
 
     # Create model save directory
     os.makedirs(model_save_dir, exist_ok=True)
@@ -149,8 +150,10 @@ def main():
     # Create model save path
     model_save_dir = Path(args.model_dir) / args.project_name
 
+    transformer = build_transformer(ExperimentConfig)
+
     # Train models
-    models, scalers, validation_results = train_objective_models(df, str(model_save_dir))
+    models, scalers, validation_results = train_objective_models(df, transformer, str(model_save_dir))
 
     # Print summary
     print(f"\nTraining Summary:")

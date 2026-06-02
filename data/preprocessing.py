@@ -14,25 +14,9 @@ import torch
 import pickle
 from sklearn.preprocessing import StandardScaler
 
+from data.transformation import ParameterTransformer
+
 logger = logging.getLogger(__name__)
-
-
-def normalize_parameters(X: np.ndarray, bounds: np.ndarray) -> torch.Tensor:
-    """Normalize experimental parameters to [0,1] range.
-
-    Args:
-        X: Raw experimental parameters (n_samples x n_features).
-        bounds: Parameter bounds (n_features x 2) with [lower, upper].
-
-    Returns:
-        Normalized parameters as torch tensor.
-    """
-    lower_bounds = bounds[:, 0]
-    upper_bounds = bounds[:, 1]
-
-    X_normalized = (X - lower_bounds) / (upper_bounds - lower_bounds)
-
-    return torch.from_numpy(X_normalized).double()
 
 
 def standardize_objectives(y: np.ndarray) -> Tuple[torch.Tensor, List[StandardScaler]]:
@@ -58,13 +42,13 @@ def standardize_objectives(y: np.ndarray) -> Tuple[torch.Tensor, List[StandardSc
     return torch.from_numpy(y_standardized).double(), scalers
 
 
-def prepare_data(X: np.ndarray, y: np.ndarray, bounds: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, List]:
+def prepare_data(X: np.ndarray, y: np.ndarray, transformer: ParameterTransformer) -> Tuple[torch.Tensor, torch.Tensor, List]:
     """Prepare training data for GP modeling.
 
     Args:
         X: Raw experimental parameters.
         y: Raw objective values.
-        bounds: Parameter bounds.
+        transformer: Parameter transformer object.
 
     Returns:
         Tuple of (normalized X, standardized y, scalers).
@@ -72,7 +56,7 @@ def prepare_data(X: np.ndarray, y: np.ndarray, bounds: np.ndarray) -> Tuple[torc
     logger.info(f"Preparing data: X shape {X.shape}, y shape {y.shape}")
 
     # Normalize parameters
-    X_normalized = normalize_parameters(X, bounds)
+    X_normalized = transformer.physical_to_unit_model(X, as_tensor=True)
 
     # Standardize objectives
     y_standardized, scalers = standardize_objectives(y)
