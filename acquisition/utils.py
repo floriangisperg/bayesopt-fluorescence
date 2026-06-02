@@ -265,7 +265,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
             n_samples=n_samples,
             bounds=bounds,
             transformer=transformer,
-            dilution_idx=2, #TODO: elimate hardcode idx, anzahl an constrained idx
+            dilution_idx=2,
             urea_idx=4,
             solubilization_urea=solubilization_urea,
             seed=seed,
