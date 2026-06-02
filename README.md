@@ -43,9 +43,9 @@ Then set up the project:
 
 ### Option A: Double-click setup
 
-| Windows     | Mac/Linux  |
-| ----------- | ---------- |
-| `setup.bat` | `setup.sh` |
+| Windows            | Mac/Linux           |
+| ------------------ | ------------------- |
+| `workshop/setup.bat` | `workshop/setup.sh` |
 
 The script installs uv (if needed), creates the virtual environment, and registers the Jupyter kernel.
 
@@ -64,7 +64,7 @@ By default, PyTorch installs CPU-only wheels. To use CUDA, edit the `[tool.uv.so
 | Document | Description |
 | --- | --- |
 | [workshop/README.md](workshop/README.md) | Notebook-first quickstart for workshop use |
-| [CLI_GUIDE.md](CLI_GUIDE.md) | Command-focused walkthrough for terminal use |
+| [workshop/CLI_GUIDE.md](workshop/CLI_GUIDE.md) | Command-focused walkthrough for terminal use |
 
 ## Workflows
 
@@ -84,7 +84,7 @@ Use the three main scripts:
 - `uv run python train_models.py`
 - `uv run python run_optimization.py`
 
-See [CLI_GUIDE.md](CLI_GUIDE.md) for the full command sequence.
+See [workshop/CLI_GUIDE.md](workshop/CLI_GUIDE.md) for the full command sequence.
 
 ### Demo with synthetic data
 
@@ -165,14 +165,14 @@ bayesopt-fluorescence/
 ├── train_models.py            # GP model training
 ├── run_optimization.py        # qNEHVI candidate generation
 ├── pyproject.toml             # Dependencies and project metadata
-├── setup.bat / setup.sh       # One-click setup scripts
-├── CLI_GUIDE.md               # Terminal workflow guide
 ├── acquisition/               # qNEHVI acquisition function
 ├── constraints/               # Urea-dilution physical constraint
 ├── data/                      # Preprocessing and scaling
 ├── models/                    # GP model, fitting, and validation
 └── workshop/                  # Notebook, demo, and workshop materials
     ├── README.md
+    ├── CLI_GUIDE.md
+    ├── setup.bat / setup.sh
     ├── workshop_notebook.ipynb
     └── demo_workflow.py
 ```

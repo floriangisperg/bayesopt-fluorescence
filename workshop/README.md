@@ -11,7 +11,7 @@ For the full project documentation, setup details, and configuration, see the [m
 
 ## Installation
 
-Requires [uv](https://docs.astral.sh/uv/). From the **project root folder** (one level up):
+Requires [uv](https://docs.astral.sh/uv/).
 
 ### Option A: Double-click setup
 
@@ -53,4 +53,4 @@ uv run python demo_workflow.py --n_iterations 5 --n_initial 12 --n_candidates 4
 
 ## If You Prefer the Terminal
 
-Use the [CLI Guide](../CLI_GUIDE.md) for the script-based workflow.
+Use the [CLI Guide](CLI_GUIDE.md) for the script-based workflow.

@@ -4,6 +4,9 @@ echo Bayesian Optimization Setup
 echo ========================================
 echo.
 
+REM The setup scripts live in workshop/ but uv sync must run from the project root.
+set "PROJECT_ROOT=%~dp0.."
+
 REM Check if uv is available
 where uv >nul 2>&1
 if %errorlevel% neq 0 (
@@ -17,16 +20,19 @@ if %errorlevel% neq 0 (
 )
 
 echo [1/3] Installing dependencies...
+pushd "%PROJECT_ROOT%"
 uv sync
 if %errorlevel% neq 0 (
     echo ERROR: Failed to install dependencies
+    popd
     pause
     exit /b 1
 )
+popd
 
 echo.
 echo [2/3] Registering Jupyter kernel...
-uv run python -m ipykernel install --user --name bayesopt-fluorescence --display-name "Python (BayesOpt)"
+uv run --project "%PROJECT_ROOT%" python -m ipykernel install --user --name bayesopt-fluorescence --display-name "Python (BayesOpt)"
 
 echo.
 echo [3/3] Done!

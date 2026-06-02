@@ -2,7 +2,7 @@
 
 This file covers the terminal workflow only.
 
-For installation, project overview, configuration, and the canonical explanation of the urea constraint, see [README.md](README.md).
+For installation, project overview, configuration, and the canonical explanation of the urea constraint, see the [main README](../README.md).
 
 ## Prerequisite
 
