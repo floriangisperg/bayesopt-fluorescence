@@ -207,7 +207,8 @@ class ParameterTransformer:
     global parameter indices via ``cols``.
 
     Shape rules:
-    - 2D inputs are interpreted as ``(n_samples, n_selected_parameters)``.
+    - Inputs with two or more dimensions use the final dimension as
+      ``n_selected_parameters`` and preserve all leading batch dimensions.
     - 1D inputs with one selected column are interpreted as many values for that
       parameter.
     - 1D inputs with multiple selected columns are interpreted as one full row.
@@ -273,38 +274,39 @@ class ParameterTransformer:
         return np.array([getattr(spec, attr) for spec in self.specs], dtype=float)
 
     @staticmethod
-    def _as_2d(x: ArrayLike, cols: List[int]) -> tuple[torch.Tensor, bool]:
-        """Convert input to a float64 tensor matrix and remember if it was 1D/scalar."""
+    def _as_2d(x: ArrayLike, cols: List[int]) -> tuple[torch.Tensor, Tuple[int, ...]]:
+        """Convert input to a flat float64 matrix and retain its original shape."""
         if torch.is_tensor(x):
             xt = x.double()
         else:
             xt = torch.as_tensor(np.asarray(x, dtype=np.float64), dtype=torch.float64)
 
         n_cols = len(cols)
+        original_shape = tuple(xt.shape)
         if xt.ndim == 0:
             if n_cols != 1:
                 raise ValueError("Scalar inputs can only be transformed with exactly one column.")
-            return xt.reshape(1, 1), True
+            return xt.reshape(1, 1), original_shape
 
         if xt.ndim == 1:
             if n_cols == 1:
-                return xt.unsqueeze(1), True
+                return xt.reshape(-1, 1), original_shape
             if xt.shape[0] == n_cols:
-                return xt.unsqueeze(0), True
+                return xt.reshape(1, n_cols), original_shape
             raise ValueError(
                 f"One-dimensional input has length {xt.shape[0]}, but {n_cols} columns were selected. "
                 "Pass a 2D array for multiple samples or pass cols=[...] for a single parameter."
             )
-        if xt.ndim == 2:
-            if xt.shape[1] != n_cols:
-                raise ValueError(f"Expected input with {n_cols} columns, got {xt.shape[1]}.")
-            return xt, False
-        raise ValueError("Expected shape (n,) for one parameter or (n, d) for multiple parameters.")
+        if xt.shape[-1] != n_cols:
+            raise ValueError(
+                f"Expected final dimension with {n_cols} columns, got {xt.shape[-1]}."
+            )
+        return xt.reshape(-1, n_cols), original_shape
 
     @staticmethod
-    def _restore_shape(x: torch.Tensor, squeeze: bool, as_tensor: bool) -> ArrayLike:
-        """Return transformed data with the caller's original 1D/2D shape convention."""
-        x = x.squeeze(0) if squeeze and x.shape[0] == 1 else x[:, 0] if squeeze else x
+    def _restore_shape(x: torch.Tensor, original_shape: Tuple[int, ...], as_tensor: bool) -> ArrayLike:
+        """Return transformed data with the caller's original shape convention."""
+        x = x.reshape(original_shape)
         if as_tensor:
             return x
         return x.detach().cpu().numpy()
@@ -336,7 +338,7 @@ class ParameterTransformer:
     ) -> ArrayLike:
         """Transform physical values to model-space unit values."""
         cols = self._resolve_cols(cols)
-        x2d, squeeze = self._as_2d(x, cols)
+        x2d, original_shape = self._as_2d(x, cols)
         z = x2d.clone()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
@@ -344,7 +346,7 @@ class ParameterTransformer:
             z[:, local_i] = self._to_tensor(
                 spec.model_transform.physical_to_unit(x2d[:, local_i])
             )
-        return self._restore_shape(z, squeeze, as_tensor)
+        return self._restore_shape(z, original_shape, as_tensor)
 
     def unit_to_physical_model(
             self,
@@ -354,14 +356,14 @@ class ParameterTransformer:
     ) -> ArrayLike:
         """Transform model-space unit values back to physical values."""
         cols = self._resolve_cols(cols)
-        z2d, squeeze = self._as_2d(z, cols)
+        z2d, original_shape = self._as_2d(z, cols)
         x = z2d.clone()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
             x[:, local_i] = self._to_tensor(
                 spec.model_transform.unit_to_physical(z2d[:, local_i])
             )
-        return self._restore_shape(x, squeeze, as_tensor)
+        return self._restore_shape(x, original_shape, as_tensor)
 
     def physical_to_unit_user(
             self,
@@ -371,14 +373,14 @@ class ParameterTransformer:
     ) -> ArrayLike:
         """Transform physical values to user-space unit values."""
         cols = self._resolve_cols(cols)
-        x2d, squeeze = self._as_2d(x, cols)
+        x2d, original_shape = self._as_2d(x, cols)
         z = x2d.clone()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
             z[:, local_i] = self._to_tensor(
                 spec.user_transform.physical_to_unit(x2d[:, local_i])
             )
-        return self._restore_shape(z, squeeze, as_tensor)
+        return self._restore_shape(z, original_shape, as_tensor)
 
     def unit_to_physical_user(
             self,
@@ -388,14 +390,14 @@ class ParameterTransformer:
     ) -> ArrayLike:
         """Transform user-space unit values back to physical values."""
         cols = self._resolve_cols(cols)
-        z2d, squeeze = self._as_2d(z, cols)
+        z2d, original_shape = self._as_2d(z, cols)
         x = z2d.clone()
         for local_i, global_i in enumerate(cols):
             spec = self.specs[global_i]
             x[:, local_i] = self._to_tensor(
                 spec.user_transform.unit_to_physical(z2d[:, local_i])
             )
-        return self._restore_shape(x, squeeze, as_tensor)
+        return self._restore_shape(x, original_shape, as_tensor)
 
     def get_physical_bounds(self, as_tensor: bool = False) -> ArrayLike:
         """Return physical parameter bounds as a ``2 x d`` array or tensor."""
