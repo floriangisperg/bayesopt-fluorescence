@@ -12,6 +12,18 @@ from .preprocessing import (
     load_scalers,
     inverse_transform_objectives
 )
+from .transformation import (
+    BaseTransformation,
+    IdentityTransform,
+    LinearScaler,
+    ReciprocalScaler,
+    LogScaler,
+    LogitScaler,
+    TRANSFORM_REGISTRY,
+    ParameterSpec,
+    ParameterTransformer,
+    build_transformer
+)
 
 __all__ = [
     'normalize_parameters',
@@ -19,5 +31,15 @@ __all__ = [
     'prepare_data',
     'save_scalers',
     'load_scalers',
-    'inverse_transform_objectives'
+    'inverse_transform_objectives',
+    'BaseTransformation',
+    'IdentityTransform',
+    'LinearScaler',
+    'ReciprocalScaler',
+    'LogScaler',
+    'LogitScaler',
+    'TRANSFORM_REGISTRY',
+    'ParameterSpec',
+    'ParameterTransformer',
+    'build_transformer'
 ]

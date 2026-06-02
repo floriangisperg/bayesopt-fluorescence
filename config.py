@@ -37,7 +37,7 @@ class ExperimentConfig:
     ]
 
     # Transformation of Parameter-Range (must match PARAMETER_NAMES)
-    PARAMETER_TRANSFORMATION: Dict[str, ParameterTransformation] = {
+    PARAMETER_TRANSFORMATION: Dict[str, Dict[str, str]] = {
         "DTT [mM]":             {"user_space": "linear",    "model_space": "linear"},
         "GSSG [mM]":            {"user_space": "linear",    "model_space": "linear"},
         "Dilution Factor":      {"user_space": "1/x",       "model_space": "1/x"},
