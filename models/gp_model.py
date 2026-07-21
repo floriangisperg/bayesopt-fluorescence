@@ -7,6 +7,7 @@ Implements a single-task GP with Matérn kernel for Bayesian optimization.
 import gpytorch
 import botorch
 import torch
+from config import ModelConfig
 
 
 class GPModel(gpytorch.models.ExactGP, botorch.models.gpytorch.GPyTorchModel):
@@ -45,7 +46,7 @@ class GPModel(gpytorch.models.ExactGP, botorch.models.gpytorch.GPyTorchModel):
         self.mean_module = gpytorch.means.ConstantMean()
         self.covar_module = gpytorch.kernels.ScaleKernel(
             gpytorch.kernels.MaternKernel(
-                nu=2.5,
+                nu=ModelConfig.KERNEL_NU,
                 ard_num_dims=train_x.shape[1]  # Automatic Relevance Determination
             )
         )

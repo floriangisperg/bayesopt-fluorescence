@@ -279,7 +279,7 @@ class ParameterTransformer:
         if torch.is_tensor(x):
             xt = x.double()
         else:
-            xt = torch.as_tensor(np.asarray(x, dtype=np.float64), dtype=torch.float64)
+            xt = torch.as_tensor(np.array(x, dtype=np.float64, copy=True), dtype=torch.float64)
 
         n_cols = len(cols)
         original_shape = tuple(xt.shape)

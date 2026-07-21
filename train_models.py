@@ -9,6 +9,7 @@ experimental data from previous iterations.
 import os
 import logging
 import argparse
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -17,7 +18,14 @@ import torch
 from config import ExperimentConfig, ModelConfig, PathConfig
 from data.preprocessing import prepare_data
 from data.transformation import ParameterTransformer, build_transformer
-from models import GPModel, fit_gp_model, save_gp_model, loocv_gp_model
+from models import GPModel, fit_gp_model, save_gp_model, loocv_gp_model, plot_training_loss
+from analysis import (
+    plot_calibration_curve,
+    plot_residuals_by_parameter,
+    save_run_metadata,
+    validate_experimental_dataframe,
+)
+from analysis.metadata import file_sha256
 
 # Set up logging
 logging.basicConfig(
@@ -39,16 +47,31 @@ def load_experimental_data(data_file: str) -> pd.DataFrame:
     logger.info(f"Loading experimental data from {data_file}")
     df = pd.read_excel(data_file)
 
-    # Validate required columns
-    required_param_cols = set(ExperimentConfig.PARAMETER_NAMES)
-    required_obj_cols = set(ExperimentConfig.OBJECTIVE_NAMES)
-
-    missing_cols = (required_param_cols | required_obj_cols) - set(df.columns)
-    if missing_cols:
-        raise ValueError(f"Missing required columns: {missing_cols}")
+    validate_experimental_dataframe(
+        df,
+        ExperimentConfig.PARAMETER_NAMES,
+        ExperimentConfig.OBJECTIVE_NAMES,
+        require_objectives=True,
+    )
+    complete_mask = df[ExperimentConfig.OBJECTIVE_NAMES].notna().all(axis=1)
+    if not complete_mask.all():
+        dropped = int((~complete_mask).sum())
+        logger.warning(f"Dropping {dropped} rows without complete objective values")
+        df = df.loc[complete_mask].copy()
 
     logger.info(f"Loaded {len(df)} experimental samples")
     return df
+
+
+def extract_ard_lengthscales(model, parameter_names):
+    """Extract ARD lengthscales from the fitted kernel."""
+    base_kernel = model.covar_module.base_kernel
+    lengthscale = base_kernel.lengthscale.detach().cpu().numpy().reshape(-1)
+    return pd.DataFrame({
+        "Parameter": parameter_names,
+        "ARD Lengthscale": lengthscale,
+        "Relative Relevance": 1.0 / lengthscale,
+    }).sort_values("Relative Relevance", ascending=False)
 
 
 def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer,  model_save_dir: str):
@@ -96,6 +119,19 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
         model_name = f"model_{i+1}_{obj_name.replace(' ', '_').lower()}.pth"
         model_path = os.path.join(model_save_dir, model_name)
         save_gp_model(model, likelihood, model_path)
+        plot_training_loss(
+            losses,
+            os.path.join(model_save_dir, f"objective_{i+1}_{obj_name.replace(' ', '_').lower()}"),
+            make_plot=True,
+        )
+
+        lengthscale_df = extract_ard_lengthscales(model, parameter_names)
+        lengthscale_df.insert(0, "Objective", obj_name)
+        lengthscale_path = os.path.join(
+            model_save_dir,
+            f"objective_{i+1}_{obj_name.replace(' ', '_').lower()}_lengthscales.xlsx",
+        )
+        lengthscale_df.to_excel(lengthscale_path, index=False)
 
         # Save scaler
         from data.preprocessing import save_scalers
@@ -117,6 +153,33 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
                 make_plot=True
             )
             validation_results[obj_name] = cv_scores
+            validation_table = pd.DataFrame({
+                "Actual Standardized": cv_scores["actual_standardized"],
+                "Predicted Standardized": cv_scores["predictions_standardized"],
+                "Uncertainty Standardized": cv_scores["uncertainties_standardized"],
+                "Actual Original": cv_scores["actual_original"],
+                "Predicted Original": cv_scores["predictions_original"],
+                "Uncertainty Original": cv_scores["uncertainties_original"],
+                "Residual Original": cv_scores["residuals_original"],
+            })
+            validation_table = pd.concat(
+                [df[parameter_names].reset_index(drop=True), validation_table],
+                axis=1,
+            )
+            validation_table.to_excel(f"{base_path}_details.xlsx", index=False)
+            plot_calibration_curve(
+                validation_table["Actual Original"].to_numpy(),
+                validation_table["Predicted Original"].to_numpy(),
+                validation_table["Uncertainty Original"].to_numpy(),
+                f"{base_path}_calibration.png",
+                title=f"Predictive Calibration - {obj_name}",
+            )
+            plot_residuals_by_parameter(
+                df[parameter_names].reset_index(drop=True),
+                validation_table["Residual Original"].to_numpy(),
+                f"{base_path}_residuals_by_parameter.png",
+                objective_name=obj_name,
+            )
 
             logger.info(f"CV Results for {obj_name}:")
             logger.info(f"  RMSE: {cv_scores['rmse']:.4f}")
@@ -124,6 +187,21 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
             logger.info(f"  Coverage: {cv_scores['coverage_95']:.4f}")
 
         models.append((model, likelihood))
+
+    validation_summary = {
+        obj: {
+            key: float(value)
+            for key, value in scores.items()
+            if not isinstance(value, list)
+        }
+        for obj, scores in validation_results.items()
+    }
+    if validation_summary:
+        with open(os.path.join(model_save_dir, "validation_summary.json"), "w", encoding="utf-8") as handle:
+            json.dump(validation_summary, handle, indent=2)
+        pd.DataFrame.from_dict(validation_summary, orient="index").to_excel(
+            os.path.join(model_save_dir, "validation_summary.xlsx")
+        )
 
     return models, scalers, validation_results
 
@@ -154,6 +232,28 @@ def main():
 
     # Train models
     models, scalers, validation_results = train_objective_models(df, transformer, str(model_save_dir))
+    save_run_metadata(
+        model_save_dir / "training_metadata.json",
+        command="train_models.py",
+        config={
+            "parameter_names": ExperimentConfig.PARAMETER_NAMES,
+            "objective_names": ExperimentConfig.OBJECTIVE_NAMES,
+            "objective_directions": ExperimentConfig.OBJECTIVE_DIRECTIONS,
+            "num_training_iterations": ModelConfig.NUM_TRAINING_ITERATIONS,
+            "learning_rate": ModelConfig.LEARNING_RATE,
+            "initial_noise_level": ModelConfig.INITIAL_NOISE_LEVEL,
+            "kernel_nu": ModelConfig.KERNEL_NU,
+            "enable_cross_validation": ModelConfig.ENABLE_CROSS_VALIDATION,
+        },
+        inputs={
+            "data_file": args.data_file,
+            "data_file_sha256": file_sha256(args.data_file),
+        },
+        extra={
+            "training_samples": len(df),
+            "model_count": len(models),
+        },
+    )
 
     # Print summary
     print(f"\nTraining Summary:")

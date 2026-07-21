@@ -51,12 +51,24 @@ class ExperimentConfig:
         "p_proxy"
     ]
 
+    # Direction for each objective. qNEHVI expects maximization-oriented values.
+    OBJECTIVE_DIRECTIONS: List[str] = [
+        "maximize",
+        "maximize"
+    ]
+
 # BO optimization hyperparameters
 class OptimizationConfig:
     """Configuration for Bayesian optimization parameters."""
 
     # Reference point for qNEHVI
     REFERENCE_POINT: torch.Tensor = torch.tensor([0.0, 0.0], dtype=torch.float64)
+    AUTO_REFERENCE_POINT: bool = False
+    REFERENCE_POINT_MARGIN_FRACTION: float = 0.1
+
+    # Candidate/reporting controls
+    MIN_CANDIDATE_DISTANCE: float = 0.0
+    ENABLE_REPLICATE_SUGGESTIONS: bool = False
 
     # Acquisition function optimization
     BATCH_SIZE: int = 4

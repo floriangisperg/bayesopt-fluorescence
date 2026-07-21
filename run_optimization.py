@@ -26,7 +26,22 @@ from data.transformation import build_transformer
 from models import GPModel, load_gp_model
 from acquisition import create_qnehvi_acquisition, optimize_qnehvi
 from acquisition.utils import update_experimental_database
-from constraints import correct_constraints_iterative
+from constraints import correct_constraints_iterative, calculate_urea_refolding_concentration
+from analysis import (
+    add_experiment_ids,
+    auto_reference_point,
+    build_candidate_report,
+    plot_design_space_pairplot,
+    plot_hypervolume_progress,
+    plot_objective_tradeoff,
+    save_dataframe_report,
+    save_json_report,
+    save_run_metadata,
+    summarize_campaign_progress,
+    validate_experimental_dataframe,
+)
+from analysis.database import mark_duplicate_parameters
+from analysis.metadata import file_sha256
 
 # Set up logging
 logging.basicConfig(
@@ -104,10 +119,23 @@ def main():
     # Load existing data
     logger.info("Loading experimental data...")
     df = pd.read_excel(args.data_file)
-    X_raw = df[ExperimentConfig.PARAMETER_NAMES].to_numpy()
-    y_raw = df[ExperimentConfig.OBJECTIVE_NAMES].to_numpy()
+    validate_experimental_dataframe(
+        df,
+        ExperimentConfig.PARAMETER_NAMES,
+        ExperimentConfig.OBJECTIVE_NAMES,
+        require_objectives=True,
+    )
+    if "Iteration" not in df.columns:
+        df["Iteration"] = 0
+    complete_mask = df[ExperimentConfig.OBJECTIVE_NAMES].notna().all(axis=1)
+    if not complete_mask.all():
+        dropped = int((~complete_mask).sum())
+        logger.warning(f"Ignoring {dropped} rows without complete objective values")
+    completed_df = df.loc[complete_mask].copy()
+    X_raw = completed_df[ExperimentConfig.PARAMETER_NAMES].to_numpy()
+    y_raw = completed_df[ExperimentConfig.OBJECTIVE_NAMES].to_numpy()
 
-    logger.info(f"Loaded {len(df)} existing experiments")
+    logger.info(f"Loaded {len(completed_df)} completed experiments")
 
     # Prepare data
     transformer = build_transformer(ExperimentConfig)
@@ -129,9 +157,21 @@ def main():
 
     # Create acquisition function
     logger.info("Creating qNEHVI acquisition function...")
+    reference_point = OptimizationConfig.REFERENCE_POINT
+    if OptimizationConfig.AUTO_REFERENCE_POINT:
+        reference_point = torch.tensor(
+            auto_reference_point(
+                train_y_standardized.detach().cpu().numpy(),
+                ["maximize"] * len(ExperimentConfig.OBJECTIVE_NAMES),
+                OptimizationConfig.REFERENCE_POINT_MARGIN_FRACTION,
+            ),
+            dtype=torch.float64,
+        )
+        logger.info(f"Using auto reference point in standardized space: {reference_point.tolist()}")
+
     acq_function = create_qnehvi_acquisition(
         model=multi_model,
-        reference_point=OptimizationConfig.REFERENCE_POINT,
+        reference_point=reference_point,
         X_baseline=train_x_normalized,
         sampler=qnehvi_sampler
     )
@@ -150,12 +190,13 @@ def main():
 
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {args.n_candidates} candidates...")
-    candidates_normalized = optimize_qnehvi(
+    candidates_normalized, acq_metadata = optimize_qnehvi(
         acq_function=acq_function,
         bounds=normalized_bounds,
         batch_size=args.n_candidates,
         sequential=True,
         nonlinear_inequality_constraints=nonlinear_inequality_constraints,
+        return_metadata=True,
         **opt_params
     )
 
@@ -189,6 +230,8 @@ def main():
         final_candidates.numpy(),
         columns=ExperimentConfig.PARAMETER_NAMES
     )
+    new_experiments_df.insert(0, "Iteration", args.iteration)
+    new_experiments_df.insert(1, "Status", "suggested")
 
     # Add placeholder columns for objectives (to be filled after experiments)
     for obj_name in ExperimentConfig.OBJECTIVE_NAMES:
@@ -196,12 +239,14 @@ def main():
 
     # Save new experimental plan
     plan_path = output_dir / f"Iteration_{args.iteration}_experimental_plan.xlsx"
+    new_experiments_df = add_experiment_ids(new_experiments_df)
+    new_experiments_df = mark_duplicate_parameters(new_experiments_df, ExperimentConfig.PARAMETER_NAMES)
     new_experiments_df.to_excel(plan_path, index=False)
     logger.info(f"Saved experimental plan to {plan_path}")
 
     # Update experimental database
     db_path = output_dir.parent / "experimental_database.xlsx"
-    update_experimental_database(new_experiments_df, args.iteration, str(db_path))
+    update_experimental_database(new_experiments_df.copy(), args.iteration, str(db_path))
 
     # Print summary
     print(f"\nOptimization Results:")
@@ -217,18 +262,56 @@ def main():
             print(f"    {param_name}: {candidate[j]:.3f}")
 
     # Calculate predicted performance for candidates (optional - may fail for some model configurations)
+    candidate_report = None
     try:
         logger.info("Predicting performance for new candidates...")
         with torch.no_grad():
             candidate_normalized = transformer.physical_to_unit_model(final_candidates, as_tensor= True)
             candidate_normalized = candidate_normalized.double()
-            predictions = multi_model(candidate_normalized)
+            posterior = multi_model.posterior(candidate_normalized)
 
-        # Stack predictions from both models
-        pred_standardized = torch.stack([pred.mean for pred in predictions], dim=-1).numpy()
+        pred_standardized = posterior.mean.detach().cpu().numpy()
+        pred_std_standardized = posterior.variance.sqrt().detach().cpu().numpy()
 
         # Convert predictions back to original scale
         pred_original = inverse_transform_objectives(torch.from_numpy(pred_standardized), model_scalers)
+        pred_upper_original = inverse_transform_objectives(
+            torch.from_numpy(pred_standardized + pred_std_standardized), model_scalers
+        )
+        pred_std_original = pred_upper_original - pred_original
+
+        with torch.no_grad():
+            acquisition_values = []
+            for candidate in candidates_normalized:
+                acquisition_values.append(float(acq_function(candidate.unsqueeze(0)).detach().cpu().reshape(-1)[0]))
+        acquisition_values = np.asarray(acquisition_values, dtype=float)
+
+        constraint_margins = []
+        urea_refolding = []
+        for candidate in final_candidates:
+            final_urea = candidate[ConstraintConfig.FINAL_UREA_IDX].item()
+            dilution_factor = candidate[ConstraintConfig.DILUTION_FACTOR_IDX].item()
+            constraint_margins.append(final_urea * dilution_factor - ConstraintConfig.SOLUBILIZATION_UREA)
+            urea_refolding.append(calculate_urea_refolding_concentration(final_urea, dilution_factor))
+
+        candidate_report = build_candidate_report(
+            new_experiments_df,
+            ExperimentConfig.PARAMETER_NAMES,
+            ExperimentConfig.OBJECTIVE_NAMES,
+            predicted_means=pred_original,
+            predicted_stds=pred_std_original,
+            acquisition_values=acquisition_values,
+            existing_unit_x=train_x_normalized,
+            candidate_unit_x=candidate_normalized,
+            objective_directions=ExperimentConfig.OBJECTIVE_DIRECTIONS,
+            constraint_margins=np.asarray(constraint_margins),
+            urea_refolding=np.asarray(urea_refolding),
+        )
+        report_path = output_dir / f"Iteration_{args.iteration}_candidate_report.xlsx"
+        save_dataframe_report(candidate_report, report_path)
+        save_dataframe_report(candidate_report, output_dir / f"Iteration_{args.iteration}_candidate_report.csv")
+        save_json_report(acq_metadata, output_dir / f"Iteration_{args.iteration}_acquisition_metadata.json")
+        logger.info(f"Saved candidate report to {report_path}")
 
         print(f"\nPredicted Performance:")
         for i, pred in enumerate(pred_original):
@@ -238,6 +321,61 @@ def main():
     except Exception as e:
         logger.warning(f"Could not predict performance for candidates: {e}")
         logger.info("Optimization completed successfully (predictions skipped)")
+
+    try:
+        progress_reference = auto_reference_point(
+            y_raw,
+            ExperimentConfig.OBJECTIVE_DIRECTIONS,
+            OptimizationConfig.REFERENCE_POINT_MARGIN_FRACTION,
+        )
+        progress_df = summarize_campaign_progress(
+            completed_df,
+            ExperimentConfig.OBJECTIVE_NAMES,
+            ExperimentConfig.OBJECTIVE_DIRECTIONS,
+            progress_reference,
+        )
+        save_dataframe_report(progress_df, output_dir / f"Iteration_{args.iteration}_campaign_progress.xlsx")
+        plot_hypervolume_progress(progress_df, output_dir / f"Iteration_{args.iteration}_hypervolume_progress.png")
+        plot_objective_tradeoff(
+            df,
+            ExperimentConfig.OBJECTIVE_NAMES,
+            output_dir / f"Iteration_{args.iteration}_objective_tradeoff.png",
+            candidate_df=candidate_report,
+            objective_directions=ExperimentConfig.OBJECTIVE_DIRECTIONS,
+        )
+        plot_design_space_pairplot(
+            pd.concat([completed_df, new_experiments_df], ignore_index=True),
+            ExperimentConfig.PARAMETER_NAMES,
+            output_dir / f"Iteration_{args.iteration}_design_space_pairplot.png",
+        )
+    except Exception as e:
+        logger.warning(f"Could not create campaign analysis plots: {e}")
+
+    save_run_metadata(
+        output_dir / f"Iteration_{args.iteration}_optimization_metadata.json",
+        command="run_optimization.py",
+        config={
+            "parameter_names": ExperimentConfig.PARAMETER_NAMES,
+            "objective_names": ExperimentConfig.OBJECTIVE_NAMES,
+            "objective_directions": ExperimentConfig.OBJECTIVE_DIRECTIONS,
+            "reference_point": reference_point.detach().cpu().tolist(),
+            "auto_reference_point": OptimizationConfig.AUTO_REFERENCE_POINT,
+            "batch_size": args.n_candidates,
+            "optimization_params": opt_params,
+            "urea_constraint_enabled": ConstraintConfig.ENABLE_UREA_CONSTRAINT,
+        },
+        inputs={
+            "data_file": args.data_file,
+            "data_file_sha256": file_sha256(args.data_file),
+            "model_dir": args.model_dir,
+        },
+        extra={
+            "iteration": args.iteration,
+            "acquisition": acq_metadata,
+            "plan_path": str(plan_path),
+            "database_path": str(db_path),
+        },
+    )
 
     logger.info("Optimization completed successfully")
 

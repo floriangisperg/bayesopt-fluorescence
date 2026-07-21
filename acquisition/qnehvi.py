@@ -8,6 +8,7 @@ physical feasibility.
 
 import logging
 from typing import Optional, List, Callable
+import time
 
 import torch
 from botorch.acquisition.multi_objective import qLogNoisyExpectedHypervolumeImprovement
@@ -135,7 +136,8 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
                     batch_size: int = 4, mc_samples: int = 2048,
                     num_restarts: int = 200, raw_samples: int = 2048,
                     sequential: bool = True,
-                    nonlinear_inequality_constraints: Optional[List[tuple[Callable, bool]]] = None) -> torch.Tensor:
+                    nonlinear_inequality_constraints: Optional[List[tuple[Callable, bool]]] = None,
+                    return_metadata: bool = False):
     """Optimize the qNEHVI acquisition function.
 
     Args:
@@ -148,11 +150,21 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
         sequential: Whether to use sequential optimization.
         nonlinear_inequality_constraints: Optional list of BoTorch nonlinear
                               constraint tuples ``(callable, intra_point)``.
+        return_metadata: Whether to return metadata of acquisition function.
 
     Returns:
         Optimized candidate points (batch_size x d).
     """
     logger.info(f"Optimizing qNEHVI with batch_size={batch_size}, mc_samples={mc_samples}")
+    started_at = time.perf_counter()
+    metadata = {
+        "batch_size": batch_size,
+        "mc_samples": mc_samples,
+        "num_restarts": num_restarts,
+        "raw_samples": raw_samples,
+        "sequential": sequential,
+        "nonlinear_constraints": len(nonlinear_inequality_constraints or []),
+    }
 
     # Set up ic_generator for nonlinear constraints
     ic_generator = None
@@ -172,7 +184,7 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
 
     batch_limit = 1 if nonlinear_inequality_constraints else 5
 
-    candidates, _ = optimize_acqf(
+    candidates, acq_value = optimize_acqf(
         acq_function=acq_function,
         bounds=bounds,
         q=batch_size,
@@ -184,7 +196,15 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
         ic_generator=ic_generator
     )
 
+    metadata["runtime_seconds"] = time.perf_counter() - started_at
+    if torch.is_tensor(acq_value):
+        metadata["final_acquisition_value"] = acq_value.detach().cpu().reshape(-1).tolist()
+    else:
+        metadata["final_acquisition_value"] = acq_value
+
     logger.info(f"Generated {candidates.shape[0]} candidate points")
+    if return_metadata:
+        return candidates, metadata
     return candidates
 
 

@@ -25,14 +25,9 @@ def save_experiments_to_excel(data: torch.Tensor, path: str) -> pd.DataFrame:
     Returns:
         DataFrame with experimental data.
     """
-    # Parameter names for DataFrame
-    parameter_names = [
-        "DTT [mM]",
-        "GSSG [mM]",
-        "Dilution Factor",
-        "pH",
-        "Final Urea [M]"
-    ]
+    from config import ExperimentConfig
+
+    parameter_names = ExperimentConfig.PARAMETER_NAMES
 
     # Create DataFrame
     df = pd.DataFrame(data=data.numpy(), columns=parameter_names)
@@ -249,6 +244,8 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
     from scipy.stats import qmc
     from scipy.spatial.distance import pdist
 
+    rng = np.random.default_rng(seed)
+
     # Check if this is the urea constraint - use specialized constrained LHD
     # Check by function name or module
     is_urea_constraint = False
@@ -323,7 +320,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
 
             for _ in range(n_candidates):
                 # Random subset selection
-                indices = np.random.choice(
+                indices = rng.choice(
                     len(all_samples_unit), size=n_samples, replace=False
                 )
                 candidate_subset = all_samples_unit[indices]
