@@ -110,14 +110,6 @@ class ConstraintConfig:
     # This is the urea concentration in the starting solubilization buffer
     SOLUBILIZATION_UREA: float = 8.0  # M
 
-    # Urea dilution constraint parameters (for post-hoc correction fallback)
-    UREA_DECREASE_STEP: float = 0.1  # M
-    DILUTION_INCREASE_STEP: float = 0.5
-    MIN_DILUTION_FACTOR: float = 2
-    MAX_DILUTION_FACTOR: float = 40
-    MAX_FINAL_UREA: float = 6
-    MAX_ADJUSTMENT_ATTEMPTS: int = 500
-
     # Parameter indices for constraint calculation
     # Order: [DTT, GSSG, Dilution Factor, pH, Final Urea]
     DILUTION_FACTOR_IDX: int = 2

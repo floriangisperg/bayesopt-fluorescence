@@ -18,7 +18,7 @@ import torch
 
 from config import ExperimentConfig, ConstraintConfig, LoggingConfig, get_transposed_bounds
 from acquisition.utils import save_experiments_to_excel, generate_initial_design
-from constraints.urea_dilution import urea_constraint_callable
+from constraints.urea_dilution import urea_constraint_callable, calculate_urea_refolding_concentration
 from data.transformation import build_transformer
 
 # Set up logging
@@ -97,12 +97,10 @@ def main():
         print(f"{name}: {df[name].min():.2f} - {df[name].max():.2f}")
 
     # Calculate and display urea refolding concentrations
-    urea_refolding = []
-    for _, row in df.iterrows():
-        final_urea = row["Final Urea [M]"]
-        dilution_factor = row["Dilution Factor"]
-        urea_ref = ((final_urea * dilution_factor) - ConstraintConfig.SOLUBILIZATION_UREA) / (dilution_factor - 1)
-        urea_refolding.append(urea_ref)
+    urea_refolding = [
+        calculate_urea_refolding_concentration(row["Final Urea [M]"], row["Dilution Factor"])
+        for _, row in df.iterrows()
+    ]
 
     df["Urea Refolding [M]"] = urea_refolding
     print(f"\nUrea Refolding Concentration:")

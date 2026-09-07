@@ -1,45 +1,144 @@
 """
 Urea dilution constraint handling for protein refolding optimization.
 
-Implements physical constraints for the urea dilution process to ensure
-that generated experimental conditions are physically feasible.
+Implements the physical constraint that the refolding buffer must be preparable
+from the solubilization stock: ``final_urea * dilution_factor >= solubilization_urea``.
+The constraint is enforced as an exact linear inequality inside the acquisition
+optimizer (see ``get_urea_linear_constraint``) and validated in physical units on
+exported experiment plans (see ``assert_urea_feasible``). There is deliberately
+no post-hoc repair: the optimizer returns feasible candidates, and a violation
+at export time indicates an upstream numerical failure that should be surfaced,
+not patched.
 """
 
 import logging
-from typing import List
+from typing import Union
 
 import numpy as np
 import torch
 
-from config import ConstraintConfig
+from config import ConstraintConfig, ExperimentConfig
 
 logger = logging.getLogger(__name__)
-CONSTRAINT_MARGIN = 1e-6
+
+# Numerical slack (M * dilution units) when validating exported plans. Orders
+# of magnitude above float64 noise from the optimizer, far below experimental
+# relevance.
+CONSTRAINT_TOLERANCE = 1e-6
 
 
-def check_urea_constraint(sample: np.ndarray,
+def get_urea_linear_constraint(solubilization_urea: float = None,
+                               dilution_idx: int = None,
+                               urea_idx: int = None) -> tuple:
+    """Get the urea constraint as a BoTorch linear inequality constraint.
+
+    The physical constraint ``final_urea * dilution_factor >= solubilization_urea``
+    is exactly linear in the pipeline's unit model space, because that space
+    stores the dilution factor reciprocally. With ``c = 1/dilution_factor`` the
+    constraint is equivalent (for ``dilution_factor > 0``) to
+    ``final_urea >= solubilization_urea * c``, and both model-space columns are
+    affine functions of their unit coordinates, so the constraint reduces to a
+    half-space ``coefficients . x >= rhs``.
+
+    Returns a tuple in BoTorch's ``inequality_constraints`` format for use with
+    ``optimize_acqf`` on the unit model space. BoTorch handles linear
+    constraints natively: initial conditions are sampled from the feasible
+    polytope and returned candidates are re-checked (and projected back onto
+    the feasible set if SLSQP leaves them marginally infeasible).
+
+    The boundary ``final_urea * dilution_factor == solubilization_urea``
+    corresponds to a refolding buffer with zero urea, which is preparable and
+    therefore considered feasible.
+
+    Args:
+        solubilization_urea: Urea concentration in solubilization buffer (M).
+            Defaults to ConstraintConfig.SOLUBILIZATION_UREA.
+        dilution_idx: Index of the dilution factor parameter. Defaults to
+                      ConstraintConfig.DILUTION_FACTOR_IDX.
+        urea_idx: Index of the final urea parameter. Defaults to
+                  ConstraintConfig.FINAL_UREA_IDX.
+
+    Returns:
+        Tuple ``(indices, coefficients, rhs)`` such that feasibility is
+        ``sum_i coefficients[i] * X[..., indices[i]] >= rhs``.
+    """
+    if solubilization_urea is None:
+        solubilization_urea = ConstraintConfig.SOLUBILIZATION_UREA
+    if dilution_idx is None:
+        dilution_idx = ConstraintConfig.DILUTION_FACTOR_IDX
+    if urea_idx is None:
+        urea_idx = ConstraintConfig.FINAL_UREA_IDX
+
+    # The linear form only holds under these model-space transforms; guard
+    # against silently building a wrong constraint if the config changes.
+    dilution_kind = ExperimentConfig.PARAMETER_TRANSFORMATION[
+        ExperimentConfig.PARAMETER_NAMES[dilution_idx]
+    ]["model_space"]
+    urea_kind = ExperimentConfig.PARAMETER_TRANSFORMATION[
+        ExperimentConfig.PARAMETER_NAMES[urea_idx]
+    ]["model_space"]
+    if dilution_kind not in ("1/x", "reciprocal"):
+        raise ValueError(
+            f"The linear urea constraint requires the dilution factor's "
+            f"model-space transform to be '1/x', got {dilution_kind!r}."
+        )
+    if urea_kind != "linear":
+        raise ValueError(
+            f"The linear urea constraint requires the final urea's "
+            f"model-space transform to be 'linear', got {urea_kind!r}."
+        )
+
+    d_lb, d_ub = ExperimentConfig.PARAMETER_BOUNDS[dilution_idx]
+    u_lb, u_ub = ExperimentConfig.PARAMETER_BOUNDS[urea_idx]
+
+    # Unit model space anchors x=0 at the physical lower bound, so the
+    # reciprocal dilution column holds c0 = 1/d_lb at x_dil = 0 and
+    # c1 = 1/d_ub at x_dil = 1. Substituting the affine unit-coordinate maps
+    # into final_urea >= S * c yields the half-space below.
+    c0, c1 = 1.0 / d_lb, 1.0 / d_ub
+    coeff_dilution = solubilization_urea * (c0 - c1)
+    coeff_urea = u_ub - u_lb
+    rhs = solubilization_urea * c0 - u_lb
+
+    return (
+        torch.tensor([dilution_idx, urea_idx], dtype=torch.long),
+        torch.tensor([coeff_dilution, coeff_urea], dtype=torch.float64),
+        float(rhs),
+    )
+
+
+def assert_urea_feasible(samples: Union[np.ndarray, torch.Tensor],
                          solubilization_urea: float = None,
                          dilution_idx: int = None,
-                         urea_idx: int = None) -> bool:
-    """Check if a sample satisfies the urea dilution physical constraint.
+                         urea_idx: int = None,
+                         tolerance: float = None) -> np.ndarray:
+    """Validate physical samples against the urea dilution constraint.
 
-    The constraint ensures that the refolding urea concentration is positive:
-    urea_refolding = (final_urea * dilution_factor - solubilization_urea) / (dilution_factor - 1) > 0
-
-    This simplifies to: final_urea * dilution_factor > solubilization_urea
+    Computes ``final_urea * dilution_factor - solubilization_urea`` for each
+    sample in physical units and raises ``ValueError`` if any value falls below
+    ``-tolerance``. The acquisition optimizer already enforces the constraint,
+    so this is a final guard on exported experiment plans: a violation here
+    signals an upstream numerical failure that should be surfaced, not
+    repaired.
 
     Args:
-        sample: Array containing the parameters in config order
-                (default: [DTT, GSSG, dilution_factor, pH, final_urea]).
+        samples: Parameter values in config order (default:
+                [DTT, GSSG, dilution_factor, pH, final_urea]). Single sample
+                ``[d]`` or batch ``[n, d]``; numpy array or torch tensor.
         solubilization_urea: Urea concentration in solubilization buffer (M).
-                           Defaults to ConstraintConfig.SOLUBILIZATION_UREA.
-        dilution_idx: Index of the dilution factor in ``sample``. Defaults to
+                Defaults to ConstraintConfig.SOLUBILIZATION_UREA.
+        dilution_idx: Index of the dilution factor in ``samples``. Defaults to
                       ConstraintConfig.DILUTION_FACTOR_IDX.
-        urea_idx: Index of the final urea in ``sample``. Defaults to
+        urea_idx: Index of the final urea in ``samples``. Defaults to
                   ConstraintConfig.FINAL_UREA_IDX.
+        tolerance: Numerical slack (M * dilution units). Defaults to
+                   CONSTRAINT_TOLERANCE.
 
     Returns:
-        True if the constraint is satisfied, False otherwise.
+        Per-sample constraint values ``final_urea * dilution_factor - S``.
+
+    Raises:
+        ValueError: If any sample violates the constraint beyond ``tolerance``.
     """
     if solubilization_urea is None:
         solubilization_urea = ConstraintConfig.SOLUBILIZATION_UREA
@@ -47,151 +146,34 @@ def check_urea_constraint(sample: np.ndarray,
         dilution_idx = ConstraintConfig.DILUTION_FACTOR_IDX
     if urea_idx is None:
         urea_idx = ConstraintConfig.FINAL_UREA_IDX
+    if tolerance is None:
+        tolerance = CONSTRAINT_TOLERANCE
 
-    final_urea = sample[urea_idx]
-    dilution_factor = sample[dilution_idx]
-    if dilution_factor <= 1:
-        # No dilution means the solubilization urea is never reduced below its
-        # maximum, so the refolding concentration cannot be positive.
-        return False
-    urea_refolding = ((final_urea * dilution_factor) - solubilization_urea) / (dilution_factor - 1)
-    return urea_refolding > 0
+    X = samples.cpu().detach().numpy() if isinstance(samples, torch.Tensor) else np.asarray(samples)
+    if X.ndim == 1:
+        X = X[None, :]
 
+    final_urea = X[:, urea_idx]
+    dilution_factor = X[:, dilution_idx]
+    values = final_urea * dilution_factor - solubilization_urea
 
-def iterative_urea_adjustment(sample: np.ndarray,
-                            solubilization_urea: float = None,
-                            urea_decrease_step: float = None,
-                            dilution_increase_step: float = None,
-                            max_dilution_factor: float = None,
-                            max_attempts: int = None,
-                            dilution_idx: int = None,
-                            urea_idx: int = None) -> np.ndarray:
-    """Adjust sample parameters to satisfy urea dilution constraints.
-
-    Uses a bounded projection strategy on final urea and dilution factor to
-    reach the feasible region with minimal adjustment.
-
-    Args:
-        sample: Array containing the parameters in config order
-                (default: [DTT, GSSG, dilution_factor, pH, final_urea]).
-        solubilization_urea: Urea concentration in solubilization buffer (M).
-        urea_decrease_step: Step size for decreasing final urea concentration.
-        dilution_increase_step: Step size for increasing dilution factor.
-        max_dilution_factor: Maximum allowed dilution factor.
-        max_attempts: Maximum number of adjustment attempts.
-        dilution_idx: Index of the dilution factor in ``sample``. Defaults to
-                      ConstraintConfig.DILUTION_FACTOR_IDX.
-        urea_idx: Index of the final urea in ``sample``. Defaults to
-                  ConstraintConfig.FINAL_UREA_IDX.
-
-    Returns:
-        Adjusted sample that satisfies the constraint (if possible).
-    """
-    # Use config defaults if not specified
-    if solubilization_urea is None:
-        solubilization_urea = ConstraintConfig.SOLUBILIZATION_UREA
-    if urea_decrease_step is None:
-        urea_decrease_step = ConstraintConfig.UREA_DECREASE_STEP
-    if dilution_increase_step is None:
-        dilution_increase_step = ConstraintConfig.DILUTION_INCREASE_STEP
-    if max_dilution_factor is None:
-        max_dilution_factor = ConstraintConfig.MAX_DILUTION_FACTOR
-    if max_attempts is None:
-        max_attempts = ConstraintConfig.MAX_ADJUSTMENT_ATTEMPTS
-    if dilution_idx is None:
-        dilution_idx = ConstraintConfig.DILUTION_FACTOR_IDX
-    if urea_idx is None:
-        urea_idx = ConstraintConfig.FINAL_UREA_IDX
-
-    if check_urea_constraint(sample, solubilization_urea, dilution_idx, urea_idx):
-        return sample
-
-    final_urea_idx = urea_idx
-    min_dilution_factor = ConstraintConfig.MIN_DILUTION_FACTOR
-
-    dilution_factor = sample[dilution_idx]
-    final_urea = sample[final_urea_idx]
-
-    # First try to repair by increasing final urea while keeping dilution fixed.
-    required_urea = (solubilization_urea + CONSTRAINT_MARGIN) / dilution_factor
-    projected_urea = min(
-        ConstraintConfig.MAX_FINAL_UREA,
-        max(final_urea, np.ceil(required_urea / urea_decrease_step) * urea_decrease_step),
-    )
-    sample[final_urea_idx] = projected_urea
-    if check_urea_constraint(sample, solubilization_urea, dilution_idx, urea_idx):
-        return sample
-
-    # If urea hits its bound, increase dilution to the minimum feasible value.
-    required_dilution = (solubilization_urea + CONSTRAINT_MARGIN) / max(
-        sample[final_urea_idx], urea_decrease_step
-    )
-    projected_dilution = min(
-        max_dilution_factor,
-        max(dilution_factor, np.ceil(required_dilution / dilution_increase_step) * dilution_increase_step),
-    )
-    sample[dilution_idx] = max(projected_dilution, min_dilution_factor)
-
-    if check_urea_constraint(sample, solubilization_urea, dilution_idx, urea_idx):
-        return sample
-
-    # Log warning if constraint couldn't be satisfied
-    if not check_urea_constraint(sample, solubilization_urea, dilution_idx, urea_idx):
-        logger.warning(f"Could not satisfy urea constraint for sample: {sample}")
-
-    return sample
-
-
-def correct_constraints_iterative(samples: List[np.ndarray],
-                                solubilization_urea: float = None,
-                                urea_decrease_step: float = None,
-                                dilution_increase_step: float = None,
-                                max_dilution_factor: float = None,
-                                max_attempts: int = None,
-                                dilution_idx: int = None,
-                                urea_idx: int = None) -> List[np.ndarray]:
-    """Apply urea dilution constraints to all samples.
-
-    Args:
-        samples: List of parameter arrays, each in config order
-                 (default: [DTT, GSSG, dilution_factor, pH, final_urea]).
-        solubilization_urea: Urea concentration in solubilization buffer (M).
-        urea_decrease_step: Step size for decreasing final urea concentration.
-        dilution_increase_step: Step size for increasing dilution factor.
-        max_dilution_factor: Maximum allowed dilution factor.
-        max_attempts: Maximum number of adjustment attempts per sample.
-        dilution_idx: Index of the dilution factor in each sample. Defaults to
-                      ConstraintConfig.DILUTION_FACTOR_IDX.
-        urea_idx: Index of the final urea in each sample. Defaults to
-                  ConstraintConfig.FINAL_UREA_IDX.
-
-    Returns:
-        List of corrected samples that satisfy the physical constraints.
-    """
-    # If constraint is disabled, return samples unchanged
-    if not ConstraintConfig.ENABLE_UREA_CONSTRAINT:
-        return samples
-
-    corrected_samples = []
-    for i, sample in enumerate(samples):
-        original_sample = sample.copy()
-        corrected_sample = iterative_urea_adjustment(
-            sample.copy(),
-            solubilization_urea,
-            urea_decrease_step,
-            dilution_increase_step,
-            max_dilution_factor,
-            max_attempts,
-            dilution_idx,
-            urea_idx
+    infeasible = values < -tolerance
+    if infeasible.any():
+        details = []
+        for i in np.where(infeasible)[0]:
+            details.append(
+                f"sample {i}: final_urea={final_urea[i]:.4f} M, "
+                f"dilution_factor={dilution_factor[i]:.4f}, "
+                f"violation={-values[i]:.3e} "
+                f"(minimum feasible final_urea={solubilization_urea / dilution_factor[i]:.4f} M)"
+            )
+        raise ValueError(
+            "Urea dilution constraint violated (final_urea * dilution_factor < "
+            f"{solubilization_urea} M) in {infeasible.sum()} of {len(X)} samples:\n  "
+            + "\n  ".join(details)
         )
-        corrected_samples.append(corrected_sample)
 
-        # Log significant changes
-        if np.any(np.abs(corrected_sample - original_sample) > 0.01):
-            logger.debug(f"Sample {i} adjusted: {original_sample} -> {corrected_sample}")
-
-    return corrected_samples
+    return values
 
 
 def calculate_urea_refolding_concentration(final_urea: float,
@@ -219,10 +201,12 @@ def calculate_urea_refolding_concentration(final_urea: float,
 def urea_constraint_callable(samples: torch.Tensor,
                             solubilization_urea: float = None,
                             bounds: torch.Tensor = None) -> torch.Tensor:
-    """Constraint callable for BoTorch nonlinear constraints.
+    """Constraint callable for rejection sampling in physical units.
 
     Returns ``final_urea * dilution_factor - solubilization_urea`` so that
-    feasible samples satisfy ``callable(x) > 0``.
+    feasible samples satisfy ``callable(x) > 0``. Used by the constraint-aware
+    initial design; the acquisition optimizer uses the linear form from
+    ``get_urea_linear_constraint`` instead.
 
     The function supports both a single sample of shape ``[d]`` and batched
     samples of shape ``[..., d]``. If ``bounds`` are provided, inputs are
@@ -249,130 +233,3 @@ def urea_constraint_callable(samples: torch.Tensor,
 
     # Return positive values for feasible samples
     return final_urea * dilution_factor - solubilization_urea
-
-
-def urea_constraint_jacobian(samples: torch.Tensor,
-                            solubilization_urea: float = None,
-                            bounds: torch.Tensor = None) -> torch.Tensor:
-    """Jacobian of the urea constraint for BoTorch.
-
-    The constraint is: final_urea * dilution_factor > solubilization_urea
-    Constraint value: f = final_urea * dilution_factor - solubilization_urea
-
-    Partial derivatives:
-        df/d(dilution_factor) = final_urea  (index 2)
-        df/d(final_urea) = dilution_factor  (index 4)
-
-    Args:
-        samples: Tensor of samples [..., d] where d is the number of parameters.
-        solubilization_urea: Urea concentration in solubilization buffer (M).
-        bounds: Optional bounds tensor (2 x d). If provided, samples are assumed
-                to be in [0,1] space and Jacobian is scaled accordingly.
-
-    Returns:
-        Tensor of Jacobian values [..., d].
-    """
-    if solubilization_urea is None:
-        solubilization_urea = ConstraintConfig.SOLUBILIZATION_UREA
-
-    # Get the shape for the Jacobian
-    batch_shape = samples.shape[:-1]
-    d = samples.shape[-1]
-
-    # Initialize Jacobian with zeros
-    jacobian = torch.zeros(*batch_shape, d, dtype=samples.dtype, device=samples.device)
-
-    # If bounds provided, denormalize samples for value computation
-    if bounds is not None:
-        samples_denorm = bounds[0] + samples * (bounds[1] - bounds[0])
-        # Scale factors for chain rule when computing gradient w.r.t. normalized inputs
-        scale_factors = bounds[1] - bounds[0]
-    else:
-        samples_denorm = samples
-        scale_factors = None
-
-    final_urea = samples_denorm[..., ConstraintConfig.FINAL_UREA_IDX]
-    dilution_factor = samples_denorm[..., ConstraintConfig.DILUTION_FACTOR_IDX]
-
-    # Set partial derivatives (in original space)
-    df_ddilution = final_urea
-    df_durea = dilution_factor
-
-    # If working in normalized space, apply chain rule
-    if scale_factors is not None:
-        df_ddilution = df_ddilution * scale_factors[ConstraintConfig.DILUTION_FACTOR_IDX]
-        df_durea = df_durea * scale_factors[ConstraintConfig.FINAL_UREA_IDX]
-
-    jacobian[..., ConstraintConfig.DILUTION_FACTOR_IDX] = df_ddilution
-    jacobian[..., ConstraintConfig.FINAL_UREA_IDX] = df_durea
-
-    return jacobian
-
-
-def get_urea_constraint_tuple(solubilization_urea: float = None,
-                              bounds: torch.Tensor = None) -> tuple:
-    """Get a BoTorch nonlinear inequality constraint specification.
-
-    BoTorch expects nonlinear inequality constraints as ``(callable, intra_point)``
-    tuples where the callable satisfies ``callable(x) >= 0`` on feasible points.
-
-    Args:
-        solubilization_urea: Urea concentration in solubilization buffer (M).
-        bounds: Bounds tensor (2 x d). If provided, the callable assumes
-                normalized inputs and denormalizes internally.
-
-    Returns:
-        Tuple of ``(constraint_callable, True)`` for an intra-point constraint.
-    """
-    if solubilization_urea is None:
-        solubilization_urea = ConstraintConfig.SOLUBILIZATION_UREA
-
-    def constraint_fn(samples: torch.Tensor) -> torch.Tensor:
-        return urea_constraint_callable(samples, solubilization_urea, bounds)
-
-    return (constraint_fn, True)
-
-
-def get_model_space_urea_constraint(transformer,
-                                    dilution_idx: int = None,
-                                    urea_idx: int = None,
-                                    solubilization_urea: float = None) -> tuple:
-    """Get a BoTorch nonlinear constraint that evaluates urea feasibility in model space.
-
-    Acquisition optimization runs on the transformer's unit model space, while
-    the urea constraint is physical. This maps candidate samples back to
-    physical units with the transformer before evaluating
-    ``final_urea * dilution_factor - solubilization_urea``.
-
-    Args:
-        transformer: ParameterTransformer used to build the model space.
-        dilution_idx: Index of the dilution factor parameter. Defaults to
-                      ConstraintConfig.DILUTION_FACTOR_IDX.
-        urea_idx: Index of the final urea parameter. Defaults to
-                  ConstraintConfig.FINAL_UREA_IDX.
-        solubilization_urea: Urea concentration in solubilization buffer (M).
-
-    Returns:
-        Tuple of ``(constraint_fn, True)`` where ``constraint_fn(x) > 0`` marks
-        feasible samples, for use in ``nonlinear_inequality_constraints``.
-    """
-    if solubilization_urea is None:
-        solubilization_urea = ConstraintConfig.SOLUBILIZATION_UREA
-    if dilution_idx is None:
-        dilution_idx = ConstraintConfig.DILUTION_FACTOR_IDX
-    if urea_idx is None:
-        urea_idx = ConstraintConfig.FINAL_UREA_IDX
-
-    def constraint_fn(samples: torch.Tensor) -> torch.Tensor:
-        pair = torch.stack([
-            samples[..., dilution_idx],
-            samples[..., urea_idx],
-        ], dim=-1)
-        pair_physical = transformer.unit_to_physical_model(
-            pair, cols=[dilution_idx, urea_idx], as_tensor=True
-        )
-        dilution_factor = pair_physical[..., 0]
-        final_urea = pair_physical[..., 1]
-        return final_urea * dilution_factor - solubilization_urea
-
-    return (constraint_fn, True)

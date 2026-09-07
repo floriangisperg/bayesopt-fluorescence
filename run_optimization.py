@@ -29,7 +29,7 @@ from data.transformation import build_transformer
 from models import GPModel, load_gp_model, sort_objective_files
 from acquisition import create_qnehvi_acquisition, optimize_qnehvi
 from acquisition.utils import update_experimental_database
-from constraints import correct_constraints_iterative, get_model_space_urea_constraint
+from constraints import get_urea_linear_constraint, assert_urea_feasible
 
 # Set up logging
 logging.basicConfig(
@@ -154,11 +154,11 @@ def main():
         sampler=qnehvi_sampler
     )
 
-    # Set up nonlinear constraints if enabled
-    nonlinear_inequality_constraints = None
+    # Set up the linear urea constraint if enabled
+    inequality_constraints = None
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        nonlinear_inequality_constraints = [get_model_space_urea_constraint(transformer)]
+        inequality_constraints = [get_urea_linear_constraint()]
 
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {args.n_candidates} candidates...")
@@ -167,33 +167,19 @@ def main():
         bounds=normalized_bounds,
         batch_size=args.n_candidates,
         sequential=OptimizationConfig.SEQUENTIAL_OPTIMIZATION,
-        nonlinear_inequality_constraints=nonlinear_inequality_constraints,
+        inequality_constraints=inequality_constraints,
         **opt_params
     )
 
     # Convert model-space candidates back to physical units
-    candidates_original = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True)
+    final_candidates = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True).double()
 
-    # The optimizer should return feasible points already. Keep a repair fallback
-    # for numerical edge cases or future constraint changes.
-    final_candidates = candidates_original.double()
-
-    # Verify constraint satisfaction (repair step runs on all candidates and
-    # only changes infeasible ones)
+    # Validate constraint satisfaction in physical units before export. The
+    # optimizer already enforces the constraint, so a violation here signals
+    # an upstream numerical failure and must stop the run.
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
-        logger.info("Verifying constraint satisfaction for generated candidates...")
-        for i, candidate in enumerate(final_candidates):
-            final_urea = candidate[ConstraintConfig.FINAL_UREA_IDX].item()
-            dilution_factor = candidate[ConstraintConfig.DILUTION_FACTOR_IDX].item()
-            constraint_value = final_urea * dilution_factor - ConstraintConfig.SOLUBILIZATION_UREA
-            if constraint_value <= 0:
-                logger.warning(f"Candidate {i+1} violates constraint: "
-                             f"final_urea={final_urea:.3f}, dilution_factor={dilution_factor:.3f}, "
-                             f"constraint_value={constraint_value:.3f}")
-        repaired_candidates = correct_constraints_iterative(
-            [candidate.numpy() for candidate in final_candidates]
-        )
-        final_candidates = torch.from_numpy(np.array(repaired_candidates)).double()
+        logger.info("Validating constraint satisfaction for generated candidates...")
+        assert_urea_feasible(final_candidates)
 
     # Create DataFrame for new experiments
     new_experiments_df = pd.DataFrame(

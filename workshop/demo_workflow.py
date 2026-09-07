@@ -34,7 +34,7 @@ from config import (
 )
 from acquisition.utils import generate_initial_design
 from constraints import (
-    correct_constraints_iterative, get_model_space_urea_constraint
+    get_urea_linear_constraint, assert_urea_feasible
 )
 from constraints.urea_dilution import urea_constraint_callable
 from data.preprocessing import prepare_data, standardize_reference_point
@@ -145,10 +145,11 @@ def generate_initial_design_with_mock_results(
         solubilization_urea=ConstraintConfig.SOLUBILIZATION_UREA
     )
 
-    # Apply physical constraints
-    samples_list = [sample.numpy() for sample in samples]
-    corrected_samples = correct_constraints_iterative(samples_list)
-    final_samples = torch.from_numpy(np.array(corrected_samples)).double()
+    # The constrained LHD samples are feasible by construction; validate loudly
+    # rather than repairing silently.
+    if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
+        assert_urea_feasible(samples.numpy())
+    final_samples = samples
 
     # Create DataFrame with parameters
     df = pd.DataFrame(
@@ -320,12 +321,12 @@ def run_bayesian_optimization(
         sampler=qnehvi_sampler
     )
 
-    # Apply the same nonlinear constraint inside the acquisition optimizer as
+    # Apply the same linear constraint inside the acquisition optimizer as
     # the CLI workflow, so the demo exercises the production code path
-    nonlinear_inequality_constraints = None
+    inequality_constraints = None
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        nonlinear_inequality_constraints = [get_model_space_urea_constraint(transformer)]
+        inequality_constraints = [get_urea_linear_constraint()]
 
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {n_candidates} candidates...")
@@ -337,16 +338,15 @@ def run_bayesian_optimization(
         num_restarts=num_restarts,
         raw_samples=raw_samples,
         sequential=True,
-        nonlinear_inequality_constraints=nonlinear_inequality_constraints
+        inequality_constraints=inequality_constraints
     )
 
     # Convert candidates from model unit space back to physical experiment units.
-    candidates_original = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True)
+    final_candidates = transformer.unit_to_physical_model(candidates_normalized, as_tensor=True).double()
 
-    # Apply physical constraints
-    candidates_list = [candidate.numpy() for candidate in candidates_original]
-    corrected_candidates = correct_constraints_iterative(candidates_list)
-    final_candidates = torch.from_numpy(np.array(corrected_candidates)).double()
+    # Validate in physical units before the plan is written
+    if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
+        assert_urea_feasible(final_candidates.numpy())
 
     # Create DataFrame for new experiments
     new_experiments_df = pd.DataFrame(
