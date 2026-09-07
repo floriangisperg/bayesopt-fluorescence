@@ -29,11 +29,16 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 # Import project modules
-from config import ExperimentConfig, ModelConfig, OptimizationConfig
+from config import (
+    ExperimentConfig, ModelConfig, OptimizationConfig, ConstraintConfig, LoggingConfig
+)
 from acquisition.utils import generate_initial_design
-from constraints.urea_dilution import correct_constraints_iterative
-from data.preprocessing import prepare_data
-from models import GPModel, fit_gp_model, save_gp_model, load_gp_model
+from constraints import (
+    correct_constraints_iterative, get_model_space_urea_constraint
+)
+from constraints.urea_dilution import urea_constraint_callable
+from data.preprocessing import prepare_data, standardize_reference_point
+from models import GPModel, fit_gp_model, save_gp_model, load_gp_model, sort_objective_files
 from botorch.models import ModelListGP
 from botorch.sampling import SobolQMCNormalSampler
 from acquisition import create_qnehvi_acquisition, optimize_qnehvi
@@ -41,8 +46,8 @@ from data.transformation import build_transformer
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=LoggingConfig.LOG_LEVEL,
+    format=LoggingConfig.LOG_FORMAT
 )
 logger = logging.getLogger(__name__)
 
@@ -122,6 +127,12 @@ def generate_initial_design_with_mock_results(
     transformer = build_transformer(ExperimentConfig)
     bounds = transformer.get_physical_bounds(as_tensor=True)
 
+    # Apply the same constraint-aware initial design as the CLI workflow
+    constraint_callable = None
+    if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
+        logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
+        constraint_callable = urea_constraint_callable
+
     # Generate initial design using LHS
     samples = generate_initial_design(
         n_samples=n_samples,
@@ -129,7 +140,9 @@ def generate_initial_design_with_mock_results(
         transformer=transformer,
         seed=seed,
         n_candidates=50,  # Reduced for testing
-        use_maximin=True
+        use_maximin=True,
+        constraint_callable=constraint_callable,
+        solubilization_urea=ConstraintConfig.SOLUBILIZATION_UREA
     )
 
     # Apply physical constraints
@@ -256,8 +269,13 @@ def run_bayesian_optimization(
     models = []
     scalers = []
 
-    model_files = sorted([f for f in os.listdir(model_dir) if f.endswith('.pth')])
-    scaler_files = sorted([f for f in os.listdir(model_dir) if f.endswith('.pkl')])
+    # Ordered by embedded objective index
+    model_files = sort_objective_files(
+        [f for f in os.listdir(model_dir) if f.endswith('.pth')]
+    )
+    scaler_files = sort_objective_files(
+        [f for f in os.listdir(model_dir) if f.endswith('.pkl')]
+    )
 
     for i, model_file in enumerate(model_files):
         model_path = os.path.join(model_dir, model_file)
@@ -292,12 +310,22 @@ def run_bayesian_optimization(
         torch.ones(train_x_normalized.shape[1], dtype=torch.float64)
     ])
 
+    # Map the real-space reference point into standardized objective space
+    reference_point = standardize_reference_point(OptimizationConfig.REFERENCE_POINT, scalers)
+
     acq_function = create_qnehvi_acquisition(
         model=multi_model,
-        reference_point=OptimizationConfig.REFERENCE_POINT,
+        reference_point=reference_point,
         X_baseline=train_x_normalized,
         sampler=qnehvi_sampler
     )
+
+    # Apply the same nonlinear constraint inside the acquisition optimizer as
+    # the CLI workflow, so the demo exercises the production code path
+    nonlinear_inequality_constraints = None
+    if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
+        logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
+        nonlinear_inequality_constraints = [get_model_space_urea_constraint(transformer)]
 
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {n_candidates} candidates...")
@@ -308,7 +336,8 @@ def run_bayesian_optimization(
         mc_samples=mc_samples,
         num_restarts=num_restarts,
         raw_samples=raw_samples,
-        sequential=True
+        sequential=True,
+        nonlinear_inequality_constraints=nonlinear_inequality_constraints
     )
 
     # Convert candidates from model unit space back to physical experiment units.

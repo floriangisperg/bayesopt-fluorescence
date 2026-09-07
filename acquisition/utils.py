@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from config import ExperimentConfig, ConstraintConfig
 from data.transformation import ParameterTransformer
 
 logger = logging.getLogger(__name__)
@@ -25,17 +26,8 @@ def save_experiments_to_excel(data: torch.Tensor, path: str) -> pd.DataFrame:
     Returns:
         DataFrame with experimental data.
     """
-    # Parameter names for DataFrame
-    parameter_names = [
-        "DTT [mM]",
-        "GSSG [mM]",
-        "Dilution Factor",
-        "pH",
-        "Final Urea [M]"
-    ]
-
     # Create DataFrame
-    df = pd.DataFrame(data=data.numpy(), columns=parameter_names)
+    df = pd.DataFrame(data=data.numpy(), columns=ExperimentConfig.PARAMETER_NAMES)
 
     # Save to Excel
     df.to_excel(path, index=False)
@@ -56,7 +48,8 @@ def update_experimental_database(new_experiments: pd.DataFrame,
     Returns:
         Updated DataFrame containing all experiments.
     """
-    # Add iteration column
+    # Add iteration column (on a copy, so the caller's DataFrame is unchanged)
+    new_experiments = new_experiments.copy()
     new_experiments['Iteration'] = iteration
 
     # Check if file exists
@@ -207,7 +200,9 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
                           use_maximin: bool = True,
                           constraint_callable: Callable = None,
                           oversampling_factor: int = 10,
-                          solubilization_urea: float = 8.0)-> torch.Tensor:
+                          solubilization_urea: float = 8.0,
+                          dilution_idx: int = None,
+                          urea_idx: int = None)-> torch.Tensor:
     """Generate initial experimental design using Latin Hypercube Sampling.
 
     Supports constraint satisfaction via:
@@ -225,6 +220,10 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
                         values for feasible samples.
         oversampling_factor: Factor by which to oversample when using rejection sampling.
         solubilization_urea: Urea concentration in solubilization buffer (M) for constrained LHD.
+        dilution_idx: Index of the dilution factor for the constrained LHD.
+                      Defaults to ConstraintConfig.DILUTION_FACTOR_IDX.
+        urea_idx: Index of the final urea for the constrained LHD.
+                  Defaults to ConstraintConfig.FINAL_UREA_IDX.
 
     Returns:
         Initial design samples (n_samples x d).
@@ -248,8 +247,12 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
             n_samples=n_samples,
             bounds=bounds,
             transformer=transformer,
-            dilution_idx=2,
-            urea_idx=4,
+            dilution_idx=(
+                ConstraintConfig.DILUTION_FACTOR_IDX if dilution_idx is None else dilution_idx
+            ),
+            urea_idx=(
+                ConstraintConfig.FINAL_UREA_IDX if urea_idx is None else urea_idx
+            ),
             solubilization_urea=solubilization_urea,
             seed=seed,
             n_candidates=n_candidates,

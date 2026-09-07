@@ -55,8 +55,11 @@ class ExperimentConfig:
 class OptimizationConfig:
     """Configuration for Bayesian optimization parameters."""
 
-    # Reference point for qNEHVI
-    REFERENCE_POINT: torch.Tensor = torch.tensor([0.0, 0.0], dtype=torch.float64)
+    # Reference point for qNEHVI in REAL objective units (not standardized).
+    # One value per objective, ordered like ExperimentConfig.OBJECTIVE_NAMES.
+    # It is mapped to standardized model space at runtime with the fitted
+    # objective scalers (see data.preprocessing.standardize_reference_point).
+    REFERENCE_POINT: List[float] = [0.0, 0.0]
 
     # Acquisition function optimization
     BATCH_SIZE: int = 4
@@ -81,25 +84,10 @@ class ModelConfig:
     INITIAL_NOISE_LEVEL: float = 0.05
 
     # Kernel parameters
-    KERNEL_NU: float = 2.5  # Matérn kernel smoothness parameter
-    ARD_NUM_DIMS: int = None  # Set automatically from data
+    KERNEL_NU: float = 2.5  # Matérn kernel smoothness parameter (0.5, 1.5 or 2.5)
 
     # Model validation
     ENABLE_CROSS_VALIDATION: bool = True
-    LOOCV: bool = True
-
-# File paths and data organization
-class PathConfig:
-    """Configuration for file paths and data organization."""
-
-    # Base paths (relative to project root)
-    DATA_BASE_PATH: str = "data/scFv"
-    RESULTS_BASE_PATH: str = "results/scFv"
-
-    # File naming patterns
-    ANALYSIS_RESULTS_PATTERN: str = "{iteration}_analysis_results_combined.xlsx"
-    EXPERIMENTAL_PLAN_PATTERN: str = "{iteration}_experimental_plan.xlsx"
-    MODEL_NAME_PATTERN: str = "gpytorch_singletaskgp_matern_25"
 
 # Logging and debugging
 class LoggingConfig:
@@ -108,8 +96,8 @@ class LoggingConfig:
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "%(asctime)s - %(levelname)s - %(message)s"
 
-    # Smoke testing mode (reduces computational load for testing)
-    SMOKE_TEST: bool = False  # Set via environment variable SMOKE_TEST
+    # Smoke testing mode (reduces computational load for testing) is enabled by
+    # setting the environment variable SMOKE_TEST; see get_optimization_params().
 
 # Urea dilution constraint parameters
 class ConstraintConfig:

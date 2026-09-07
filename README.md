@@ -105,7 +105,7 @@ uv run python generate_initial_design.py \
     --n_candidates 100
 ```
 
-Output: `results/iteration_0_experimental_plan.xlsx`
+Output: `results/iteration_0_experimental_plan.xlsx` (includes empty objective columns to fill in after the experiments)
 
 ### Train the GP models
 
@@ -143,6 +143,8 @@ All project settings live in `config.py`.
 | `ConstraintConfig` | Urea constraint toggle and parameters |
 | `ModelConfig` | GP training and validation settings |
 | `OptimizationConfig` | qNEHVI and acquisition optimization settings |
+
+`OptimizationConfig.REFERENCE_POINT` is specified in **real objective units** (one value per objective, ordered like `OBJECTIVE_NAMES`). It is mapped to the GP models' standardized space at runtime, so changing it does not require rescaling anything manually.
 
 Default experimental parameters: **DTT** (0–25 mM), **GSSG** (0–2.5 mM), **Dilution Factor** (2–40), **pH** (8–11), **Final Urea** (0–6 M).
 

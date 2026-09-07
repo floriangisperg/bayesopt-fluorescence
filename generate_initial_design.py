@@ -16,15 +16,15 @@ import numpy as np
 import pandas as pd
 import torch
 
-from config import ExperimentConfig, ConstraintConfig, get_transposed_bounds
+from config import ExperimentConfig, ConstraintConfig, LoggingConfig, get_transposed_bounds
 from acquisition.utils import save_experiments_to_excel, generate_initial_design
 from constraints.urea_dilution import urea_constraint_callable
 from data.transformation import build_transformer
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=LoggingConfig.LOG_LEVEL,
+    format=LoggingConfig.LOG_FORMAT
 )
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,12 @@ def main():
     print(f"Max: {max(urea_refolding):.2f} M")
     print(f"Mean: {np.mean(urea_refolding):.2f} M")
 
-    # Save updated DataFrame with refolding concentrations
+    # Add empty objective columns so the plan is ready to be filled in and
+    # accepted by train_models.py without manual column creation
+    for obj_name in ExperimentConfig.OBJECTIVE_NAMES:
+        df[obj_name] = np.nan
+
+    # Save updated DataFrame with refolding concentrations and objective columns
     df.to_excel(output_path, index=False)
     logger.info("Initial design generation completed successfully")
 

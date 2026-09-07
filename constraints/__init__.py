@@ -12,7 +12,8 @@ from .urea_dilution import (
     calculate_urea_refolding_concentration,
     urea_constraint_callable,
     urea_constraint_jacobian,
-    get_urea_constraint_tuple
+    get_urea_constraint_tuple,
+    get_model_space_urea_constraint
 )
 
 __all__ = [
@@ -22,5 +23,6 @@ __all__ = [
     'calculate_urea_refolding_concentration',
     'urea_constraint_callable',
     'urea_constraint_jacobian',
-    'get_urea_constraint_tuple'
+    'get_urea_constraint_tuple',
+    'get_model_space_urea_constraint'
 ]

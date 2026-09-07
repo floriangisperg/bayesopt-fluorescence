@@ -19,19 +19,22 @@ from botorch.sampling import SobolQMCNormalSampler
 
 from config import (
     ExperimentConfig, OptimizationConfig, ModelConfig, ConstraintConfig,
-    get_normalized_bounds, get_optimization_params
+    LoggingConfig, get_normalized_bounds, get_optimization_params
 )
-from data.preprocessing import prepare_data, load_scalers, inverse_transform_objectives
+from data.preprocessing import (
+    prepare_data, load_scalers, inverse_transform_objectives,
+    standardize_reference_point
+)
 from data.transformation import build_transformer
-from models import GPModel, load_gp_model
+from models import GPModel, load_gp_model, sort_objective_files
 from acquisition import create_qnehvi_acquisition, optimize_qnehvi
 from acquisition.utils import update_experimental_database
-from constraints import correct_constraints_iterative
+from constraints import correct_constraints_iterative, get_model_space_urea_constraint
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=LoggingConfig.LOG_LEVEL,
+    format=LoggingConfig.LOG_FORMAT
 )
 logger = logging.getLogger(__name__)
 
@@ -50,16 +53,20 @@ def load_trained_models(model_dir: str, train_x: torch.Tensor, train_y: torch.Te
     models = []
     scalers = []
 
-    # Load models and scalers
-    model_files = [f for f in os.listdir(model_dir) if f.endswith('.pth')]
-    scaler_files = [f for f in os.listdir(model_dir) if f.endswith('.pkl')]
+    # Load models and scalers (ordered by embedded objective index)
+    model_files = sort_objective_files(
+        [f for f in os.listdir(model_dir) if f.endswith('.pth')]
+    )
+    scaler_files = sort_objective_files(
+        [f for f in os.listdir(model_dir) if f.endswith('.pkl')]
+    )
 
-    for i, model_file in enumerate(sorted(model_files)):
+    for i, model_file in enumerate(model_files):
         model_path = os.path.join(model_dir, model_file)
         model, _ = load_gp_model(model_path, GPModel, train_x, train_y, i)
         models.append(model)
 
-    for i, scaler_file in enumerate(sorted(scaler_files)):
+    for i, scaler_file in enumerate(scaler_files):
         scaler_path = os.path.join(model_dir, scaler_file)
         scaler = load_scalers(scaler_path)[0]
         scalers.append(scaler)
@@ -117,6 +124,17 @@ def main():
     logger.info("Loading trained models...")
     multi_model, model_scalers = load_trained_models(args.model_dir, train_x_normalized, train_y_standardized)
 
+    # Map the real-space reference point into standardized objective space
+    ref_point_real = OptimizationConfig.REFERENCE_POINT
+    reference_point = standardize_reference_point(ref_point_real, model_scalers)
+    for j, (value, obj_name) in enumerate(zip(ref_point_real, ExperimentConfig.OBJECTIVE_NAMES)):
+        if y_raw[:, j].min() < value:
+            logger.warning(
+                f"Reference point {value} for '{obj_name}' is above the worst "
+                f"observed value ({y_raw[:, j].min():.4f}); observations below it "
+                "cannot contribute to the hypervolume."
+            )
+
     # Get optimization parameters
     opt_params = get_optimization_params()
     normalized_bounds = get_normalized_bounds(num_features=train_x_normalized.shape[1])
@@ -131,7 +149,7 @@ def main():
     logger.info("Creating qNEHVI acquisition function...")
     acq_function = create_qnehvi_acquisition(
         model=multi_model,
-        reference_point=OptimizationConfig.REFERENCE_POINT,
+        reference_point=reference_point,
         X_baseline=train_x_normalized,
         sampler=qnehvi_sampler
     )
@@ -140,20 +158,7 @@ def main():
     nonlinear_inequality_constraints = None
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        def model_space_urea_constraint(samples: torch.Tensor) -> torch.Tensor:
-            pair = torch.stack([
-                samples[..., ConstraintConfig.DILUTION_FACTOR_IDX],
-                samples[..., ConstraintConfig.FINAL_UREA_IDX],
-            ], dim=-1)
-            pair_physical = transformer.unit_to_physical_model(
-                pair, cols=[ConstraintConfig.DILUTION_FACTOR_IDX, ConstraintConfig.FINAL_UREA_IDX],
-                as_tensor=True
-            )
-            dilution_factor = pair_physical[..., 0]
-            final_urea = pair_physical[..., 1]
-            return final_urea * dilution_factor - ConstraintConfig.SOLUBILIZATION_UREA
-
-        nonlinear_inequality_constraints = [(model_space_urea_constraint, True)]
+        nonlinear_inequality_constraints = [get_model_space_urea_constraint(transformer)]
 
     # Optimize acquisition function
     logger.info(f"Optimizing acquisition function for {args.n_candidates} candidates...")
@@ -161,7 +166,7 @@ def main():
         acq_function=acq_function,
         bounds=normalized_bounds,
         batch_size=args.n_candidates,
-        sequential=True,
+        sequential=OptimizationConfig.SEQUENTIAL_OPTIMIZATION,
         nonlinear_inequality_constraints=nonlinear_inequality_constraints,
         **opt_params
     )
@@ -173,10 +178,10 @@ def main():
     # for numerical edge cases or future constraint changes.
     final_candidates = candidates_original.double()
 
-    # Verify constraint satisfaction (sanity check when constraint is enabled)
+    # Verify constraint satisfaction (repair step runs on all candidates and
+    # only changes infeasible ones)
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info("Verifying constraint satisfaction for generated candidates...")
-        repaired_candidates = []
         for i, candidate in enumerate(final_candidates):
             final_urea = candidate[ConstraintConfig.FINAL_UREA_IDX].item()
             dilution_factor = candidate[ConstraintConfig.DILUTION_FACTOR_IDX].item()
@@ -185,10 +190,9 @@ def main():
                 logger.warning(f"Candidate {i+1} violates constraint: "
                              f"final_urea={final_urea:.3f}, dilution_factor={dilution_factor:.3f}, "
                              f"constraint_value={constraint_value:.3f}")
-                repaired_candidates.append(candidate.numpy())
-            else:
-                repaired_candidates.append(candidate.numpy())
-        repaired_candidates = correct_constraints_iterative(repaired_candidates)
+        repaired_candidates = correct_constraints_iterative(
+            [candidate.numpy() for candidate in final_candidates]
+        )
         final_candidates = torch.from_numpy(np.array(repaired_candidates)).double()
 
     # Create DataFrame for new experiments
@@ -223,16 +227,18 @@ def main():
         for j, param_name in enumerate(ExperimentConfig.PARAMETER_NAMES):
             print(f"    {param_name}: {candidate[j]:.3f}")
 
-    # Calculate predicted performance for candidates (optional - may fail for some model configurations)
+    # Calculate predicted performance for the new candidates. Note: a
+    # ModelListGP must not be called with a single shared input tensor
+    # (gpytorch zips inputs with sub-models); predict per objective instead.
     try:
         logger.info("Predicting performance for new candidates...")
         with torch.no_grad():
-            candidate_normalized = transformer.physical_to_unit_model(final_candidates, as_tensor= True)
+            candidate_normalized = transformer.physical_to_unit_model(final_candidates, as_tensor=True)
             candidate_normalized = candidate_normalized.double()
-            predictions = multi_model(candidate_normalized)
-
-        # Stack predictions from both models
-        pred_standardized = torch.stack([pred.mean for pred in predictions], dim=-1).numpy()
+            pred_standardized = torch.stack(
+                [model(candidate_normalized).mean for model in multi_model.models],
+                dim=-1
+            ).numpy()
 
         # Convert predictions back to original scale
         pred_original = inverse_transform_objectives(torch.from_numpy(pred_standardized), model_scalers)

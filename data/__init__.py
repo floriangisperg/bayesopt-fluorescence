@@ -6,6 +6,7 @@ Contains utilities for data preprocessing, normalization, and transformation.
 
 from .preprocessing import (
     standardize_objectives,
+    standardize_reference_point,
     prepare_data,
     save_scalers,
     load_scalers,
@@ -26,6 +27,7 @@ from .transformation import (
 
 __all__ = [
     'standardize_objectives',
+    'standardize_reference_point',
     'prepare_data',
     'save_scalers',
     'load_scalers',

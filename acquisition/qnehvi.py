@@ -15,6 +15,7 @@ from botorch.acquisition.multi_objective import IdentityMCMultiOutputObjective
 from botorch.optim import optimize_acqf
 from botorch.optim.parameter_constraints import evaluate_feasibility
 from constraints.urea_dilution import get_urea_constraint_tuple
+from config import OptimizationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,14 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
             )
         ic_generator = ic_gen
 
-    batch_limit = 1 if nonlinear_inequality_constraints else 5
+    # Joint batches are avoided with nonlinear constraints (SLSQP handles
+    # q=1 per sequential step much more reliably); otherwise the configured
+    # batch limit applies.
+    batch_limit = (
+        1 if nonlinear_inequality_constraints
+        else OptimizationConfig.ACQF_OPTIONS.get("batch_limit", 5)
+    )
+    maxiter = OptimizationConfig.ACQF_OPTIONS.get("maxiter", 200)
 
     candidates, _ = optimize_acqf(
         acq_function=acq_function,
@@ -179,7 +187,7 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
         num_restarts=num_restarts,
         raw_samples=raw_samples,
         sequential=sequential,
-        options={"batch_limit": batch_limit, "maxiter": 200},
+        options={"batch_limit": batch_limit, "maxiter": maxiter},
         nonlinear_inequality_constraints=nonlinear_inequality_constraints,
         ic_generator=ic_generator
     )

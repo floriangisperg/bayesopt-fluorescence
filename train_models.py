@@ -14,15 +14,15 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from config import ExperimentConfig, ModelConfig, PathConfig
+from config import ExperimentConfig, ModelConfig, LoggingConfig
 from data.preprocessing import prepare_data
 from data.transformation import ParameterTransformer, build_transformer
 from models import GPModel, fit_gp_model, save_gp_model, loocv_gp_model
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=LoggingConfig.LOG_LEVEL,
+    format=LoggingConfig.LOG_FORMAT
 )
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
                 base_path,
                 GPModel,
                 scalers[i],
+                noise=ModelConfig.INITIAL_NOISE_LEVEL,
                 make_plot=True
             )
             validation_results[obj_name] = cv_scores

@@ -6,6 +6,7 @@ and visualizing training progress.
 """
 
 import os
+import re
 import logging
 from typing import Tuple, List
 
@@ -15,6 +16,28 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
+
+
+def sort_objective_files(filenames: List[str]) -> List[str]:
+    """Sort saved model/scaler files by their embedded objective index.
+
+    ``train_models.py`` names files ``model_{i}_{objective}.pth`` and
+    ``scaler_{i}_{objective}.pkl``. Plain lexicographic sorting would place
+    ``model_10_...`` before ``model_2_...``, mispairing files with objectives
+    once more than nine objectives exist.
+
+    Args:
+        filenames: File names to sort.
+
+    Returns:
+        File names ordered by objective index (lexicographically for names
+        without an index).
+    """
+    def key(name: str):
+        match = re.search(r'_(\d+)_', name)
+        return (int(match.group(1)), name) if match else (float('inf'), name)
+
+    return sorted(filenames, key=key)
 
 
 def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,

@@ -42,6 +42,37 @@ def standardize_objectives(y: np.ndarray) -> Tuple[torch.Tensor, List[StandardSc
     return torch.from_numpy(y_standardized).double(), scalers
 
 
+def standardize_reference_point(ref_point: List[float], scalers: List) -> torch.Tensor:
+    """Map a reference point from real objective units to standardized space.
+
+    qNEHVI operates on the standardized objectives the GP models are trained
+    on, while ``OptimizationConfig.REFERENCE_POINT`` is specified in real
+    (measured) objective units. This applies each objective's scaler so the
+    reference point can be passed to the acquisition function.
+
+    Args:
+        ref_point: Reference point in real units, ordered like the objectives.
+        scalers: Fitted StandardScalers, one per objective.
+
+    Returns:
+        Reference point in standardized space as a float64 tensor.
+    """
+    if len(ref_point) != len(scalers):
+        raise ValueError(
+            f"Reference point has {len(ref_point)} values but there are "
+            f"{len(scalers)} objective scalers"
+        )
+
+    standardized = []
+    for value, scaler in zip(ref_point, scalers):
+        transformed = scaler.transform(
+            np.array([[value]], dtype=np.float64)
+        )
+        standardized.append(float(transformed[0, 0]))
+
+    return torch.tensor(standardized, dtype=torch.float64)
+
+
 def prepare_data(X: np.ndarray, y: np.ndarray, transformer: ParameterTransformer) -> Tuple[torch.Tensor, torch.Tensor, List]:
     """Prepare training data for GP modeling.
 

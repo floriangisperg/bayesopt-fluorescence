@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 def loocv_gp_model(train_x: torch.Tensor, train_y: torch.Tensor,
-                   objective_idx: int, path: str, model_class, scaler, make_plot: bool = False):
+                   objective_idx: int, path: str, model_class, scaler,
+                   noise: float = 0.01, make_plot: bool = False):
     """Perform leave-one-out cross-validation on GP model.
 
     Args:
@@ -26,6 +27,8 @@ def loocv_gp_model(train_x: torch.Tensor, train_y: torch.Tensor,
         path: Base path for saving plots.
         model_class: GP model class.
         scaler: Scaler used for standardization.
+        noise: Initial likelihood noise. Should match the noise used for the
+               model under validation so the scores describe the same setup.
         make_plot: Whether to generate plots.
 
     Returns:
@@ -50,6 +53,7 @@ def loocv_gp_model(train_x: torch.Tensor, train_y: torch.Tensor,
         from .gp_fitting import fit_gp_model
         loo_model, loo_likelihood, _ = fit_gp_model(
             loo_train_x, loo_train_y, model_class,
+            noise=noise,
             num_train_iters=500  # Faster training for LOOCV
         )
 
