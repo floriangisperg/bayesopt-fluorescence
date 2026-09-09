@@ -21,7 +21,9 @@ from data.transformation import ParameterTransformer
 logger = logging.getLogger(__name__)
 
 
-def validate_experiment_data(df: pd.DataFrame) -> None:
+def validate_experiment_data(df: pd.DataFrame,
+                             parameter_names: List[str] = None,
+                             objective_names: List[str] = None) -> None:
     """Validate a filled-in experimental plan before model training.
 
     Catches the two mistakes that silently corrupt GP fits at the bench:
@@ -32,21 +34,32 @@ def validate_experiment_data(df: pd.DataFrame) -> None:
 
     Args:
         df: Experimental data with parameter and objective columns.
+        parameter_names: Parameter column names. Defaults to
+            ``ExperimentConfig.PARAMETER_NAMES``; pass explicit names when
+            validating a plan built from custom columns (e.g. the workshop
+            notebook's user-defined parameters).
+        objective_names: Objective column names, analogous to
+            ``parameter_names``.
 
     Raises:
         ValueError: If any objective value is missing.
     """
-    missing = df[ExperimentConfig.OBJECTIVE_NAMES].isna()
+    if parameter_names is None:
+        parameter_names = ExperimentConfig.PARAMETER_NAMES
+    if objective_names is None:
+        objective_names = ExperimentConfig.OBJECTIVE_NAMES
+
+    missing = df[objective_names].isna()
     if missing.any().any():
         rows = df.index[missing.any(axis=1)].tolist()
         raise ValueError(
             "Objective columns contain missing values: rows "
             f"{rows} have no value for at least one of "
-            f"{ExperimentConfig.OBJECTIVE_NAMES}. Fill in the measurements "
+            f"{objective_names}. Fill in the measurements "
             "(or remove unfinished rows) before training."
         )
 
-    duplicated = df.duplicated(subset=ExperimentConfig.PARAMETER_NAMES, keep=False)
+    duplicated = df.duplicated(subset=parameter_names, keep=False)
     if duplicated.any():
         rows = df.index[duplicated].tolist()
         logger.warning(

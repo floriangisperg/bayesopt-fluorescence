@@ -59,7 +59,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: 
     """Generate Latin Hypercube Design that respects the urea dilution constraint.
 
     Uses conditional sampling to maintain stratification while satisfying:
-        final_urea * dilution_factor > solubilization_urea
+        final_urea * dilution_factor >= solubilization_urea
 
     The approach:
     1. Generate LHD for independent parameters (DTT, GSSG, pH)
@@ -140,7 +140,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: 
 
         # For each dilution factor, compute feasible urea range and sample
         # from it. By construction min_feasible_urea <= urea_upper here.
-        # Constraint: final_urea > solubilization_urea / dilution_factor
+        # Constraint: final_urea >= solubilization_urea / dilution_factor
         min_feasible_urea = np.maximum(solubilization_urea / samples_dil, urea_lower)
 
         # Generate stratified samples for urea within feasible ranges

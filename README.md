@@ -166,7 +166,7 @@ The physical urea constraint is controlled by `ConstraintConfig.ENABLE_UREA_CONS
 - Bayesian optimization passes the urea condition as an exact linear inequality constraint to the acquisition optimizer.
 - Exported candidates are validated against the constraint; a violation stops the run instead of being repaired, since it signals an upstream numerical failure.
 
-Feasibility condition: `final_urea * dilution_factor > solubilization_urea` (default: `> 8.0`).
+Feasibility condition: `final_urea * dilution_factor >= solubilization_urea` (default: `>= 8.0`). The boundary corresponds to a zero-urea refolding buffer, which is preparable and therefore feasible.
 
 ## Repository Structure
 

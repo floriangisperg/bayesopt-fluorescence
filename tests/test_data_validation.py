@@ -57,3 +57,23 @@ def test_distinct_objectives_same_parameters_also_flagged(caplog):
     with caplog.at_level(logging.WARNING, logger="data.preprocessing"):
         validate_experiment_data(df)
     assert any("Duplicate parameter rows" in record.message for record in caplog.records)
+
+
+def test_custom_column_names():
+    """Workshop notebooks define their own parameters/objectives; validation
+    must check those columns instead of the config defaults."""
+    rng = np.random.default_rng(1)
+    df = pd.DataFrame(rng.uniform(0, 1, size=(3, 2)), columns=["salt", "temp"])
+    df["signal"] = [1.0, 2.0, 3.0]
+
+    # Defaults fail (no config columns present); explicit names work
+    with pytest.raises(KeyError):
+        validate_experiment_data(df)
+    validate_experiment_data(df, parameter_names=["salt", "temp"],
+                             objective_names=["signal"])
+
+    # ...and the custom names drive the missing-value check
+    df.loc[2, "signal"] = np.nan
+    with pytest.raises(ValueError, match=r"rows \[2\]"):
+        validate_experiment_data(df, parameter_names=["salt", "temp"],
+                                 objective_names=["signal"])
