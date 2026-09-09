@@ -285,7 +285,9 @@ class ParameterTransformer:
         if torch.is_tensor(x):
             xt = x.double()
         else:
-            xt = torch.as_tensor(np.asarray(x, dtype=np.float64), dtype=torch.float64)
+            # Copy so read-only views (e.g. pandas to_numpy) become writable
+            # tensors instead of triggering undefined-behavior warnings
+            xt = torch.as_tensor(np.array(x, dtype=np.float64, copy=True), dtype=torch.float64)
 
         n_cols = len(cols)
         original_shape = tuple(xt.shape)
