@@ -65,6 +65,7 @@ By default, PyTorch installs CPU-only wheels. To use CUDA, edit the `[tool.uv.so
 | --- | --- |
 | [workshop/README.md](workshop/README.md) | Notebook-first quickstart for workshop use |
 | [workshop/CLI_GUIDE.md](workshop/CLI_GUIDE.md) | Command-focused walkthrough for terminal use |
+| [workshop/ANALYSIS_WORKFLOW_MANUAL.md](workshop/ANALYSIS_WORKFLOW_MANUAL.md) | Outputs and reports of the training and optimization steps |
 
 ## Workflows
 
