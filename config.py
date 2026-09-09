@@ -5,9 +5,11 @@ Centralizes all hyperparameters, bounds, and experimental parameters
 to improve maintainability and reproducibility.
 """
 
+from typing import Any, Dict, List
+
 import numpy as np
 import torch
-from typing import Tuple, List, Dict, Any
+
 
 # Experiment parameters
 class ExperimentConfig:

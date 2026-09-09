@@ -5,12 +5,11 @@ Provides leave-one-out cross-validation for GP model assessment.
 """
 
 import logging
-from typing import List
 
-import numpy as np
-import torch
 import gpytorch
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 from .gp_fitting import fit_gp_model
 

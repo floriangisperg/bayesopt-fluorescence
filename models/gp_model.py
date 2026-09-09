@@ -4,9 +4,8 @@ Gaussian Process model definition for protein refolding optimization.
 Implements a single-task GP with Matérn kernel for Bayesian optimization.
 """
 
-import gpytorch
 import botorch
-import torch
+import gpytorch
 
 from config import ModelConfig
 

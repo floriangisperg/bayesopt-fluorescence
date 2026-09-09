@@ -7,17 +7,16 @@ loop using space-filling Latin Hypercube Sampling with maximin criterion
 optimization and physical constraints.
 """
 
-import os
-import logging
 import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from config import ExperimentConfig, ConstraintConfig, LoggingConfig, get_transposed_bounds
 from acquisition.utils import generate_initial_design
-from constraints.urea_dilution import urea_constraint_callable, calculate_urea_refolding_concentration
+from config import ConstraintConfig, ExperimentConfig, LoggingConfig, get_transposed_bounds
+from constraints.urea_dilution import calculate_urea_refolding_concentration
 from data.transformation import build_transformer
 
 # Set up logging
@@ -63,13 +62,13 @@ def main():
     # Create transformer for parameter scaling (if needed)
     transformer = build_transformer(ExperimentConfig)
 
-    # Set up constraint callable if enabled
-    constraint_callable = None
+    # Set up the constraint-aware design strategy if enabled
+    design_strategy = "lhs"
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        constraint_callable = urea_constraint_callable
+        design_strategy = "constrained_lhd"
 
-    # Generate initial design with constraint-aware rejection sampling
+    # Generate initial design
     samples = generate_initial_design(
         n_samples=args.n_samples,
         bounds=bounds,
@@ -77,7 +76,7 @@ def main():
         seed=args.seed,
         n_candidates=args.n_candidates,
         use_maximin=not args.no_maximin,
-        constraint_callable=constraint_callable,
+        design_strategy=design_strategy,
         solubilization_urea=ConstraintConfig.SOLUBILIZATION_UREA
     )
 
@@ -103,14 +102,14 @@ def main():
     logger.info(f"Saved {len(df)} experiments to {output_path}")
 
     # Print summary statistics
-    print(f"\nInitial Design Summary:")
+    print("\nInitial Design Summary:")
     print(f"Total samples: {len(df)}")
     print(f"Saved to: {output_path}")
-    print(f"\nParameter ranges:")
+    print("\nParameter ranges:")
     for i, name in enumerate(ExperimentConfig.PARAMETER_NAMES):
         print(f"{name}: {df[name].min():.2f} - {df[name].max():.2f}")
 
-    print(f"\nUrea Refolding Concentration:")
+    print("\nUrea Refolding Concentration:")
     print(f"Min: {min(urea_refolding):.2f} M")
     print(f"Max: {max(urea_refolding):.2f} M")
     print(f"Mean: {np.mean(urea_refolding):.2f} M")

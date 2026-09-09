@@ -6,9 +6,9 @@ This script implements the main BO loop using qNEHVI for multi-objective
 optimization of Delta AEW and p_proxy.
 """
 
-import os
-import logging
 import argparse
+import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -17,19 +17,26 @@ import torch
 from botorch.models import ModelListGP
 from botorch.sampling import SobolQMCNormalSampler
 
+from acquisition import create_qnehvi_acquisition, optimize_qnehvi
+from acquisition.utils import update_experimental_database
 from config import (
-    ExperimentConfig, OptimizationConfig, ModelConfig, ConstraintConfig,
-    LoggingConfig, get_normalized_bounds, get_optimization_params
+    ConstraintConfig,
+    ExperimentConfig,
+    LoggingConfig,
+    OptimizationConfig,
+    get_normalized_bounds,
+    get_optimization_params,
 )
+from constraints import assert_urea_feasible, get_urea_linear_constraint
 from data.preprocessing import (
-    prepare_data, load_scalers, inverse_transform_objectives,
-    standardize_reference_point
+    inverse_transform_objectives,
+    load_scalers,
+    prepare_data,
+    standardize_reference_point,
+    validate_experiment_data,
 )
 from data.transformation import build_transformer
 from models import GPModel, load_gp_model, sort_objective_files
-from acquisition import create_qnehvi_acquisition, optimize_qnehvi
-from acquisition.utils import update_experimental_database
-from constraints import get_urea_linear_constraint, assert_urea_feasible
 
 # Set up logging
 logging.basicConfig(
@@ -90,10 +97,18 @@ def main():
                        help='Number of new candidates to generate')
     parser.add_argument('--iteration', type=int, required=True,
                        help='Current iteration number')
+    parser.add_argument('--seed', type=int, default=42,
+                       help='Random seed for MC sampling and acquisition '
+                            'optimization (same data + seed = same candidates)')
     parser.add_argument('--smoke_test', action='store_true',
                        help='Run in smoke test mode (reduced computation)')
 
     args = parser.parse_args()
+
+    # Seed torch so the MC sampler and acquisition optimizer are reproducible:
+    # identical data and seed always yield the same candidate batch
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
 
     # Set smoke test mode if requested
     if args.smoke_test:
@@ -111,6 +126,7 @@ def main():
     # Load existing data
     logger.info("Loading experimental data...")
     df = pd.read_excel(args.data_file)
+    validate_experiment_data(df)
     X_raw = df[ExperimentConfig.PARAMETER_NAMES].to_numpy()
     y_raw = df[ExperimentConfig.OBJECTIVE_NAMES].to_numpy()
 
@@ -201,13 +217,13 @@ def main():
     update_experimental_database(new_experiments_df, args.iteration, str(db_path))
 
     # Print summary
-    print(f"\nOptimization Results:")
+    print("\nOptimization Results:")
     print(f"Iteration: {args.iteration}")
     print(f"New candidates: {args.n_candidates}")
     print(f"Plan saved to: {plan_path}")
     print(f"Database updated: {db_path}")
 
-    print(f"\nCandidate Summary:")
+    print("\nCandidate Summary:")
     for i, candidate in enumerate(final_candidates):
         print(f"  Candidate {i+1}:")
         for j, param_name in enumerate(ExperimentConfig.PARAMETER_NAMES):
@@ -229,7 +245,7 @@ def main():
         # Convert predictions back to original scale
         pred_original = inverse_transform_objectives(torch.from_numpy(pred_standardized), model_scalers)
 
-        print(f"\nPredicted Performance:")
+        print("\nPredicted Performance:")
         for i, pred in enumerate(pred_original):
             print(f"  Candidate {i+1}:")
             for j, obj_name in enumerate(ExperimentConfig.OBJECTIVE_NAMES):

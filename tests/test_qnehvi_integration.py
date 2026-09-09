@@ -7,11 +7,12 @@ guard in run_optimization.py relies on.
 """
 
 import numpy as np
-import pytest
 import torch
 from botorch.models import ModelListGP
 from botorch.sampling import SobolQMCNormalSampler
+from sklearn.preprocessing import StandardScaler
 
+from acquisition import create_qnehvi_acquisition, optimize_qnehvi
 from config import (
     ConstraintConfig,
     ExperimentConfig,
@@ -24,8 +25,6 @@ from constraints.urea_dilution import CONSTRAINT_TOLERANCE
 from data.preprocessing import prepare_data, standardize_reference_point
 from data.transformation import build_transformer
 from models import GPModel, fit_gp_model, loocv_gp_model
-from acquisition import create_qnehvi_acquisition, optimize_qnehvi
-from sklearn.preprocessing import StandardScaler
 
 N_PARAMS = len(ExperimentConfig.PARAMETER_NAMES)
 LB = ExperimentConfig.PARAMETER_BOUNDS[:, 0]

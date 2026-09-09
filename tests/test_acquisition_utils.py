@@ -7,13 +7,15 @@ import pandas as pd
 import pytest
 import torch
 
-from config import ConstraintConfig, ExperimentConfig
 from acquisition.utils import (
     generate_constrained_lhd,
+    generate_initial_design,
     update_experimental_database,
 )
-from models.gp_fitting import sort_objective_files
+from config import ConstraintConfig, ExperimentConfig
+from constraints.urea_dilution import urea_constraint_callable
 from data.transformation import build_transformer
+from models.gp_fitting import sort_objective_files
 
 N_PARAMS = len(ExperimentConfig.PARAMETER_NAMES)
 LB = ExperimentConfig.PARAMETER_BOUNDS[:, 0]
@@ -90,6 +92,88 @@ def test_constrained_lhd_maximin_keeps_feasibility(bounds_tensor):
     assert (values >= -1e-9).all()
     assert (samples >= LB - 1e-12).all()
     assert (samples <= UB + 1e-12).all()
+
+
+def test_constrained_lhd_restricts_dilution_when_partially_infeasible(bounds_tensor):
+    """With S=13 M, dilution < 13/6 has no feasible urea: draws must stay in
+    the feasible dilution subrange instead of producing out-of-bounds urea."""
+    transformer = build_transformer(ExperimentConfig)
+    samples = generate_constrained_lhd(
+        n_samples=15, bounds=bounds_tensor, transformer=transformer,
+        seed=11, use_maximin=False, solubilization_urea=13.0,
+    )
+    assert (samples >= LB - 1e-12).all()
+    assert (samples <= UB + 1e-12).all()
+    values = samples[:, UREA_IDX] * samples[:, DIL_IDX] - 13.0
+    assert (values >= -1e-9).all()
+    # Every dilution factor comes from the feasible subrange [13/6, 40]
+    assert (samples[:, DIL_IDX] >= 13.0 / 6.0 - 1e-9).all()
+
+
+def test_constrained_lhd_raises_when_config_infeasible(bounds_tensor):
+    """S=300 M exceeds even urea_upper * dilution_max = 240: no design exists."""
+    transformer = build_transformer(ExperimentConfig)
+    with pytest.raises(ValueError, match="cannot be satisfied"):
+        generate_constrained_lhd(
+            n_samples=8, bounds=bounds_tensor, transformer=transformer,
+            seed=1, use_maximin=False, solubilization_urea=300.0,
+        )
+
+
+def test_design_strategies_dispatch_explicitly(bounds_tensor):
+    transformer = build_transformer(ExperimentConfig)
+
+    # constrained_lhd works without any callable (the strategy is explicit)
+    samples = generate_initial_design(
+        n_samples=6, bounds=bounds_tensor, transformer=transformer,
+        seed=3, n_candidates=3, use_maximin=False, design_strategy="constrained_lhd",
+    )
+    values = samples[:, UREA_IDX] * samples[:, DIL_IDX] - S
+    assert (values >= -1e-9).all()
+
+    # plain LHS ignores constraints
+    samples = generate_initial_design(
+        n_samples=6, bounds=bounds_tensor, transformer=transformer,
+        seed=3, design_strategy="lhs",
+    )
+    assert samples.shape == (6, N_PARAMS)
+
+    # a callable supplied alongside a strategy that would ignore it is an error
+    with pytest.raises(ValueError, match="would ignore it"):
+        generate_initial_design(
+            n_samples=6, bounds=bounds_tensor, transformer=transformer,
+            seed=3, design_strategy="lhs",
+            constraint_callable=urea_constraint_callable,
+        )
+
+    # rejection requires a callable; unknown strategies are rejected
+    with pytest.raises(ValueError, match="requires a constraint_callable"):
+        generate_initial_design(
+            n_samples=6, bounds=bounds_tensor, transformer=transformer,
+            seed=3, design_strategy="rejection",
+        )
+    with pytest.raises(ValueError, match="Unknown design_strategy"):
+        generate_initial_design(
+            n_samples=6, bounds=bounds_tensor, transformer=transformer,
+            seed=3, design_strategy="name-sniffing",
+        )
+
+
+def test_rejection_strategy_is_fully_seeded(bounds_tensor):
+    """The maximin subset draw must be reproducible from `seed` alone."""
+    transformer = build_transformer(ExperimentConfig)
+    kwargs = dict(
+        n_samples=6, bounds=bounds_tensor, transformer=transformer,
+        seed=17, n_candidates=5, use_maximin=True,
+        design_strategy="rejection",
+        constraint_callable=urea_constraint_callable,
+    )
+    first = generate_initial_design(**kwargs)
+    second = generate_initial_design(**kwargs)
+    torch.testing.assert_close(first, second)
+
+    values = urea_constraint_callable(first)
+    assert (values > 0).all()
 
 
 def test_update_experimental_database_accumulates(tmp_path):

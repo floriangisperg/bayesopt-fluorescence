@@ -103,6 +103,7 @@ Arguments:
 | `--output_dir`   | `results` | Output directory                          |
 | `--n_candidates` | 4         | Number of new candidates                  |
 | `--iteration`    | required  | Iteration number for the new batch        |
+| `--seed`         | 42        | Seed for MC sampling and acquisition      |
 | `--smoke_test`   | False     | Use reduced computation for quick testing |
 
 Outputs:
@@ -114,6 +115,8 @@ Notes:
 
 - When enabled, the urea condition is passed into the acquisition optimizer as an exact linear inequality constraint.
 - Exported candidates are validated against the constraint; a violation stops the run instead of being repaired, since it signals an upstream numerical failure.
+- Same `--data_file` + same `--seed` = the same candidate batch, every time.
+- Models are only loaded if their training-data fingerprint matches the data file; changed data or config means retraining first.
 - `experimental_database.xlsx` logs generated batches, but it does not automatically become your next training file because newly proposed experiments do not yet have measured objectives.
 
 ## Step 5: Continue the Loop
@@ -162,7 +165,7 @@ uv sync
 
 ### Missing required columns
 
-Check that the Excel file contains all parameter columns plus measured values for `Delta AEW` and `p_proxy`.
+Check that the Excel file contains all parameter columns plus measured values for `Delta AEW` and `p_proxy`. Training lists the row numbers of any experiments with missing objective values, and warns about duplicated experiments (identical parameter rows).
 
 ### Model file not found
 

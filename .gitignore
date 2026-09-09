@@ -42,6 +42,7 @@ env/
 # Tool specific
 .claude/
 .pytest_cache/
+.ruff_cache/
 .serena/
 .virtual_documents/
 

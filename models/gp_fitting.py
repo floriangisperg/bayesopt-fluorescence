@@ -2,18 +2,51 @@
 Gaussian Process model fitting and loading utilities.
 
 Provides functions for training GPs, and saving/loading model states.
+Saved models carry a fingerprint of their training data and configuration,
+which is verified on load so data or config drift cannot silently produce
+wrong predictions.
 """
 
+import hashlib
+import json
+import logging
 import os
 import re
-import logging
-from typing import Tuple, List
+from typing import List, Tuple
 
 import gpytorch
 import torch
 from botorch.fit import fit_gpytorch_mll
 
+from config import ExperimentConfig, ModelConfig
+
 logger = logging.getLogger(__name__)
+
+
+def _tensor_sha1(tensor: torch.Tensor) -> str:
+    """Content hash of a tensor, stable across runs for identical data."""
+    return hashlib.sha1(
+        tensor.detach().cpu().contiguous().numpy().tobytes()
+    ).hexdigest()
+
+
+def _config_snapshot() -> dict:
+    """The experiment-configuration state a GP was trained under.
+
+    Everything that changes how training inputs are mapped into model space
+    or how the kernel is built. Bounds and transformations shape the unit
+    space; KERNEL_NU selects the kernel family.
+    """
+    return {
+        "parameter_bounds": ExperimentConfig.PARAMETER_BOUNDS.tolist(),
+        "parameter_transformation": ExperimentConfig.PARAMETER_TRANSFORMATION,
+        "kernel_nu": ModelConfig.KERNEL_NU,
+    }
+
+
+def _config_sha1() -> str:
+    canonical = json.dumps(_config_snapshot(), sort_keys=True)
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
 
 
 def sort_objective_files(filenames: List[str]) -> List[str]:
@@ -39,8 +72,15 @@ def sort_objective_files(filenames: List[str]) -> List[str]:
 
 
 def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
-                  train_y_standardized: torch.Tensor, objective_idx: int = 0):
+                  train_y_standardized: torch.Tensor, objective_idx: int = 0,
+                  strict: bool = True):
     """Load a Gaussian Process model and its likelihood from file.
+
+    The model is reconstructed with the training data passed in here (GPyTorch
+    keeps it outside the state dict), so a fingerprint of the data and config
+    it was originally trained on is verified to catch drift: loading with
+    different data or a changed configuration would silently pair stale
+    hyperparameters with a different problem.
 
     Args:
         filepath: Path to the saved model file.
@@ -48,13 +88,16 @@ def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
         train_x_normalized: Normalized training inputs.
         train_y_standardized: Standardized training outputs.
         objective_idx: Index of the objective to load (for multi-output models).
+        strict: Raise on fingerprint mismatch. With ``strict=False`` a
+                mismatch is logged as a warning and the model still loads.
 
     Returns:
         Tuple of (model, likelihood).
 
     Raises:
         FileNotFoundError: If model file is not found.
-        ValueError: If saved file format is invalid.
+        ValueError: If saved file format is invalid, or (with ``strict=True``)
+            the training data or configuration does not match the checkpoint.
     """
     try:
         saved_data = torch.load(filepath)
@@ -64,6 +107,36 @@ def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
     # Validate saved data structure
     if 'model_state_dict' not in saved_data or 'likelihood_state_dict' not in saved_data:
         raise ValueError(f"Invalid model file format: {filepath}")
+
+    # Verify the checkpoint belongs to the data and config at hand
+    fingerprint = saved_data.get('training_data_fingerprint')
+    if fingerprint is None:
+        logger.info(
+            f"No training fingerprint stored in {filepath} (legacy "
+            "checkpoint); skipping data/config verification."
+        )
+    else:
+        mismatches = []
+        if fingerprint.get('train_x_sha1') != _tensor_sha1(train_x_normalized):
+            mismatches.append("the training inputs differ")
+        if fingerprint.get('train_y_sha1') != _tensor_sha1(
+                train_y_standardized[:, objective_idx]):
+            mismatches.append("the training targets differ")
+        if fingerprint.get('config_sha1') != _config_sha1():
+            mismatches.append(
+                "the experiment configuration differs (bounds, parameter "
+                "transformations, or kernel settings)"
+            )
+        if mismatches:
+            message = (
+                f"Checkpoint {filepath} does not match the data at hand: "
+                + " and ".join(mismatches)
+                + ". Retrain the models on the current data, or pass "
+                "strict=False to load anyway."
+            )
+            if strict:
+                raise ValueError(message)
+            logger.warning(message)
 
     # Create fresh likelihood object
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
@@ -92,6 +165,10 @@ def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
 def save_gp_model(model, likelihood, filepath: str):
     """Save a Gaussian Process model and its likelihood to file.
 
+    Stores a fingerprint of the training data and experiment configuration
+    alongside the state dicts, so ``load_gp_model`` can detect data or config
+    drift before the model is used.
+
     Args:
         model: Trained GP model.
         likelihood: Trained likelihood.
@@ -110,7 +187,13 @@ def save_gp_model(model, likelihood, filepath: str):
         'training_data_shape': {
             'train_x_shape': model.train_inputs[0].shape if model.train_inputs else None,
             'train_y_shape': model.train_targets.shape if hasattr(model, 'train_targets') else None
-        }
+        },
+        'training_data_fingerprint': {
+            'train_x_sha1': _tensor_sha1(model.train_inputs[0]),
+            'train_y_sha1': _tensor_sha1(model.train_targets),
+            'config_sha1': _config_sha1(),
+        },
+        'config_snapshot': _config_snapshot(),
     }, filepath)
 
     logger.info(f'Model and likelihood saved successfully to {filepath}')

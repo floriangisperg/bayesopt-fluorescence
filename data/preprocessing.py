@@ -5,18 +5,56 @@ Provides functions for normalizing experimental parameters and standardizing
 objective values for Gaussian Process modeling.
 """
 
-import os
 import logging
-from typing import Tuple, List
+import os
+import pickle
+from typing import List, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
-import pickle
 from sklearn.preprocessing import StandardScaler
 
+from config import ExperimentConfig
 from data.transformation import ParameterTransformer
 
 logger = logging.getLogger(__name__)
+
+
+def validate_experiment_data(df: pd.DataFrame) -> None:
+    """Validate a filled-in experimental plan before model training.
+
+    Catches the two mistakes that silently corrupt GP fits at the bench:
+    forgotten objective entries (NaNs propagate through standardization into
+    the likelihood) and duplicated parameter rows (identical experiments bias
+    the GP and distort leave-one-out cross-validation scores, since a
+    duplicate is perfectly predicted by its twin).
+
+    Args:
+        df: Experimental data with parameter and objective columns.
+
+    Raises:
+        ValueError: If any objective value is missing.
+    """
+    missing = df[ExperimentConfig.OBJECTIVE_NAMES].isna()
+    if missing.any().any():
+        rows = df.index[missing.any(axis=1)].tolist()
+        raise ValueError(
+            "Objective columns contain missing values: rows "
+            f"{rows} have no value for at least one of "
+            f"{ExperimentConfig.OBJECTIVE_NAMES}. Fill in the measurements "
+            "(or remove unfinished rows) before training."
+        )
+
+    duplicated = df.duplicated(subset=ExperimentConfig.PARAMETER_NAMES, keep=False)
+    if duplicated.any():
+        rows = df.index[duplicated].tolist()
+        logger.warning(
+            "Duplicate parameter rows detected: %s. Identical experiments "
+            "bias the GP and inflate LOOCV scores; keep them only if they "
+            "are intentional replicate measurements.",
+            rows,
+        )
 
 
 def standardize_objectives(y: np.ndarray) -> Tuple[torch.Tensor, List[StandardScaler]]:
@@ -73,7 +111,8 @@ def standardize_reference_point(ref_point: List[float], scalers: List) -> torch.
     return torch.tensor(standardized, dtype=torch.float64)
 
 
-def prepare_data(X: np.ndarray, y: np.ndarray, transformer: ParameterTransformer) -> Tuple[torch.Tensor, torch.Tensor, List]:
+def prepare_data(X: np.ndarray, y: np.ndarray,
+                 transformer: ParameterTransformer) -> Tuple[torch.Tensor, torch.Tensor, List]:
     """Prepare training data for GP modeling.
 
     Args:

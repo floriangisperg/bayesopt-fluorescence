@@ -15,8 +15,8 @@ from data.transformation import (
     IdentityTransform,
     LinearScaler,
     LogScaler,
-    ReciprocalScaler,
     ParameterTransformer,
+    ReciprocalScaler,
     build_transformer,
 )
 
