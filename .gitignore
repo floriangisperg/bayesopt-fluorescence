@@ -39,6 +39,9 @@ env/
 *.xlsx
 *.png
 
+# related literature
+publication/
+
 # Tool specific
 .claude/
 .pytest_cache/
