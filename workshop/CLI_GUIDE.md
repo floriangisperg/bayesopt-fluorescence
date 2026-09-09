@@ -64,7 +64,7 @@ Training requires both objective columns to contain values.
 ```bash
 uv run python train_models.py \
     --data_file results/iteration_0_experimental_plan.xlsx \
-    --model_dir models \
+    --model_dir trained_models \
     --project_name iteration_0_models
 ```
 
@@ -73,22 +73,22 @@ Arguments:
 | Argument         | Default           | Description                             |
 | ---------------- | ----------------- | --------------------------------------- |
 | `--data_file`    | required          | Excel file with completed measurements  |
-| `--model_dir`    | `models`          | Directory to save trained models        |
+| `--model_dir`    | `trained_models`  | Directory to save trained models        |
 | `--project_name` | `gpytorch_models` | Subdirectory name for this training run |
 
 Typical outputs:
 
-- `models/iteration_0_models/model_1_delta_aew.pth`
-- `models/iteration_0_models/model_2_p_proxy.pth`
-- `models/iteration_0_models/scaler_1_delta_aew.pkl`
-- `models/iteration_0_models/scaler_2_p_proxy.pkl`
+- `trained_models/iteration_0_models/model_1_delta_aew.pth`
+- `trained_models/iteration_0_models/model_2_p_proxy.pth`
+- `trained_models/iteration_0_models/scaler_1_delta_aew.pkl`
+- `trained_models/iteration_0_models/scaler_2_p_proxy.pkl`
 
 ## Step 4: Generate the Next Batch
 
 ```bash
 uv run python run_optimization.py \
     --data_file results/iteration_0_experimental_plan.xlsx \
-    --model_dir models/iteration_0_models \
+    --model_dir trained_models/iteration_0_models \
     --output_dir results \
     --n_candidates 4 \
     --iteration 1
@@ -112,8 +112,8 @@ Outputs:
 
 Notes:
 
-- When enabled, the urea condition is passed into the acquisition optimizer as a nonlinear inequality constraint.
-- The script still performs a repair pass afterward as a safety fallback.
+- When enabled, the urea condition is passed into the acquisition optimizer as an exact linear inequality constraint.
+- Exported candidates are validated against the constraint; a violation stops the run instead of being repaired, since it signals an upstream numerical failure.
 - `experimental_database.xlsx` logs generated batches, but it does not automatically become your next training file because newly proposed experiments do not yet have measured objectives.
 
 ## Step 5: Continue the Loop
@@ -131,14 +131,14 @@ Then retrain and generate the next suggestions:
 ```bash
 uv run python train_models.py \
     --data_file results/combined_iteration_1.xlsx \
-    --model_dir models \
+    --model_dir trained_models \
     --project_name iteration_1_models
 ```
 
 ```bash
 uv run python run_optimization.py \
     --data_file results/combined_iteration_1.xlsx \
-    --model_dir models/iteration_1_models \
+    --model_dir trained_models/iteration_1_models \
     --output_dir results \
     --n_candidates 4 \
     --iteration 2

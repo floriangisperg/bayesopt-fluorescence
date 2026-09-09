@@ -47,8 +47,7 @@ env/
 
 # Runtime outputs
 results/
-models/*.pth
-models/*.pkl
+trained_models/
 test_results/
 workshop/workshop_results/
 

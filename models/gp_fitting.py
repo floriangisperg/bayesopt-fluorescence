@@ -1,8 +1,7 @@
 """
 Gaussian Process model fitting and loading utilities.
 
-Provides functions for training GP models, saving/loading model states,
-and visualizing training progress.
+Provides functions for training GPs, and saving/loading model states.
 """
 
 import os
@@ -12,8 +11,7 @@ from typing import Tuple, List
 
 import gpytorch
 import torch
-import torch.optim as optim
-import matplotlib.pyplot as plt
+from botorch.fit import fit_gpytorch_mll
 
 logger = logging.getLogger(__name__)
 
@@ -119,97 +117,43 @@ def save_gp_model(model, likelihood, filepath: str):
 
 
 def fit_gp_model(train_x: torch.Tensor, train_y: torch.Tensor, model_class,
-                 noise: float = 0.01, num_train_iters: int = 1000, lr: float = 0.01,
-                 save_model: bool = False, filepath: str = None) -> Tuple[object, object, List[float]]:
+                 noise: float = 0.01) -> Tuple[object, object]:
     """Fit a Gaussian Process model to training data.
+
+    Hyperparameters are optimized by maximizing the exact marginal
+    log-likelihood with BoTorch's ``fit_gpytorch_mll`` (scipy L-BFGS-B, with
+    random restarts on failure). The optimizer runs to convergence, so there
+    is no learning rate or iteration budget to tune, and every caller —
+    model training and LOOCV alike — fits under the identical regime.
 
     Args:
         train_x: Input features.
         train_y: Target outputs.
         model_class: GP model class to be instantiated.
-        noise: Initial noise level for the likelihood.
-        num_train_iters: Number of training iterations.
-        lr: Learning rate for the optimizer.
-        save_model: Whether to save the model after training.
-        filepath: File path for saving the model.
+        noise: Initial noise level for the likelihood (starting point for the
+               optimizer; the fitted value may differ).
 
     Returns:
-        Tuple of (model, likelihood, losses).
+        Tuple of (model, likelihood).
     """
     # Initialize likelihood (noise is learnable during training)
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
     likelihood.noise = noise
     model = model_class(train_x, train_y, likelihood)
 
-    # Set to training mode
-    model.train()
-    likelihood.train()
-
-    # Optimizer and objective
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # Exact marginal log-likelihood objective
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
-    losses = []
-    for i in range(num_train_iters):
-        optimizer.zero_grad()
-        output = model(train_x)
-        loss = -mll(output, train_y)
-        # Ensure loss is a scalar
-        if loss.dim() > 0:
-            loss = loss.mean()
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
+    # Cap the optimizer budget in smoke-test mode; on the small datasets this
+    # workflow uses, the full fit converges quickly anyway.
+    optimizer_kwargs = None
+    if os.environ.get("SMOKE_TEST"):
+        optimizer_kwargs = {"options": {"maxiter": 100}}
+
+    fit_gpytorch_mll(mll, optimizer_kwargs=optimizer_kwargs)
 
     # Set to evaluation mode
     model.eval()
     likelihood.eval()
 
-    if save_model and filepath:
-        save_gp_model(model, likelihood, filepath)
-
-    return model, likelihood, losses
-
-
-def plot_training_loss(losses: List[float], path: str, make_plot: bool = True):
-    """Plot training loss over iterations.
-
-    Args:
-        losses: List of loss values during training.
-        path: Base path for saving the plot.
-        make_plot: Whether to save the plot to file.
-    """
-    plt.figure(figsize=(7.5, 2.5))
-    plt.plot(losses, label='Training Loss')
-    plt.xlabel('Iterations')
-    plt.ylabel('Loss')
-    plt.title('GP Training Loss Over Iterations')
-    plt.legend()
-
-    if make_plot:
-        plt.savefig(f"{path}_training_loss.png", dpi=300)
-    plt.close()
-
-
-def plot_predictions(test_x: torch.Tensor, test_y: torch.Tensor,
-                    predicted_y: torch.Tensor, path: str, make_plot: bool = False):
-    """Plot predictions vs actual values.
-
-    Args:
-        test_x: Test inputs.
-        test_y: True test outputs.
-        predicted_y: Predicted outputs.
-        path: Base path for saving the plot.
-        make_plot: Whether to save the plot to file.
-    """
-    plt.figure(figsize=(7.5, 2.5))
-    plt.plot(test_x, test_y, 'r*', label='Actual Data')
-    plt.plot(test_x, predicted_y, 'b-', label='Predicted Data')
-    plt.xlabel('Input Features')
-    plt.ylabel('Output Targets')
-    plt.title('Comparison of Predictions and Actual Data')
-    plt.legend()
-
-    if make_plot:
-        plt.savefig(f"{path}_pred_vs_actual.png", dpi=300)
-    plt.close()
+    return model, likelihood

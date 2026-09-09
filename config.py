@@ -7,12 +7,7 @@ to improve maintainability and reproducibility.
 
 import numpy as np
 import torch
-from typing import Tuple, List, Dict, Any, TypedDict
-
-
-class ParameterTransformation(TypedDict):
-    user_space: str
-    model_space: str
+from typing import Tuple, List, Dict, Any
 
 # Experiment parameters
 class ExperimentConfig:
@@ -76,11 +71,13 @@ class OptimizationConfig:
 
 # GP model training configuration
 class ModelConfig:
-    """Configuration for Gaussian Process model training."""
+    """Configuration for Gaussian Process model training.
 
-    # Training hyperparameters
-    NUM_TRAINING_ITERATIONS: int = 1000
-    LEARNING_RATE: float = 0.01
+    Hyperparameters are fitted by maximizing the exact marginal
+    log-likelihood to convergence (see models.gp_fitting.fit_gp_model), so
+    there is no learning rate or iteration budget here.
+    """
+
     INITIAL_NOISE_LEVEL: float = 0.05
 
     # Kernel parameters

@@ -10,30 +10,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from config import ExperimentConfig, ConstraintConfig
+from config import ConstraintConfig
 from data.transformation import ParameterTransformer
 
 logger = logging.getLogger(__name__)
-
-
-def save_experiments_to_excel(data: torch.Tensor, path: str) -> pd.DataFrame:
-    """Convert experiment tensor to DataFrame and save as Excel file.
-
-    Args:
-        data: Tensor containing experimental parameters.
-        path: Path where Excel file will be saved.
-
-    Returns:
-        DataFrame with experimental data.
-    """
-    # Create DataFrame
-    df = pd.DataFrame(data=data.numpy(), columns=ExperimentConfig.PARAMETER_NAMES)
-
-    # Save to Excel
-    df.to_excel(path, index=False)
-    logger.info(f"Saved {len(df)} experiments to {path}")
-
-    return df
 
 
 def update_experimental_database(new_experiments: pd.DataFrame,

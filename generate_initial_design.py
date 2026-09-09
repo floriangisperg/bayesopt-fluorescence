@@ -14,10 +14,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
 
 from config import ExperimentConfig, ConstraintConfig, LoggingConfig, get_transposed_bounds
-from acquisition.utils import save_experiments_to_excel, generate_initial_design
+from acquisition.utils import generate_initial_design
 from constraints.urea_dilution import urea_constraint_callable, calculate_urea_refolding_concentration
 from data.transformation import build_transformer
 
@@ -84,9 +83,24 @@ def main():
 
     final_samples = samples
 
-    # Save to Excel
+    # Build the complete experimental plan and write it once: parameters,
+    # derived urea refolding concentrations, and empty objective columns so
+    # the plan is ready to be filled in and accepted by train_models.py
+    # without manual column creation
+    df = pd.DataFrame(final_samples.numpy(), columns=ExperimentConfig.PARAMETER_NAMES)
+
+    urea_refolding = [
+        calculate_urea_refolding_concentration(row["Final Urea [M]"], row["Dilution Factor"])
+        for _, row in df.iterrows()
+    ]
+    df["Urea Refolding [M]"] = urea_refolding
+
+    for obj_name in ExperimentConfig.OBJECTIVE_NAMES:
+        df[obj_name] = np.nan
+
     output_path = output_dir / f"{args.project_name}_experimental_plan.xlsx"
-    df = save_experiments_to_excel(final_samples, str(output_path))
+    df.to_excel(output_path, index=False)
+    logger.info(f"Saved {len(df)} experiments to {output_path}")
 
     # Print summary statistics
     print(f"\nInitial Design Summary:")
@@ -96,25 +110,11 @@ def main():
     for i, name in enumerate(ExperimentConfig.PARAMETER_NAMES):
         print(f"{name}: {df[name].min():.2f} - {df[name].max():.2f}")
 
-    # Calculate and display urea refolding concentrations
-    urea_refolding = [
-        calculate_urea_refolding_concentration(row["Final Urea [M]"], row["Dilution Factor"])
-        for _, row in df.iterrows()
-    ]
-
-    df["Urea Refolding [M]"] = urea_refolding
     print(f"\nUrea Refolding Concentration:")
     print(f"Min: {min(urea_refolding):.2f} M")
     print(f"Max: {max(urea_refolding):.2f} M")
     print(f"Mean: {np.mean(urea_refolding):.2f} M")
 
-    # Add empty objective columns so the plan is ready to be filled in and
-    # accepted by train_models.py without manual column creation
-    for obj_name in ExperimentConfig.OBJECTIVE_NAMES:
-        df[obj_name] = np.nan
-
-    # Save updated DataFrame with refolding concentrations and objective columns
-    df.to_excel(output_path, index=False)
     logger.info("Initial design generation completed successfully")
 
 

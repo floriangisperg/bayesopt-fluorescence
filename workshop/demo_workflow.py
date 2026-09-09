@@ -178,8 +178,7 @@ def generate_initial_design_with_mock_results(
 
 def train_gp_models(
     data_file: str,
-    model_save_dir: str,
-    smoke_test: bool = False
+    model_save_dir: str
 ):
     """Train GP models from experimental data."""
     logger.info(f"=== STEP 2: Training GP Models ===")
@@ -203,7 +202,6 @@ def train_gp_models(
 
     # Train models for each objective
     models = []
-    n_iters = 100 if smoke_test else ModelConfig.NUM_TRAINING_ITERATIONS
 
     for i, obj_name in enumerate(objective_names):
         logger.info(f"Training model {i+1}/{len(objective_names)}: {obj_name}")
@@ -212,13 +210,11 @@ def train_gp_models(
         train_y_single = train_y_standardized[:, i]
 
         # Train model
-        model, likelihood, losses = fit_gp_model(
+        model, likelihood = fit_gp_model(
             train_x=train_x_normalized,
             train_y=train_y_single,
             model_class=GPModel,
-            noise=ModelConfig.INITIAL_NOISE_LEVEL,
-            num_train_iters=n_iters,
-            lr=ModelConfig.LEARNING_RATE
+            noise=ModelConfig.INITIAL_NOISE_LEVEL
         )
 
         # Save model
@@ -232,7 +228,7 @@ def train_gp_models(
         scaler_path = os.path.join(model_save_dir, scaler_name)
         save_scalers([scalers[i]], scaler_path)
 
-        logger.info(f"  Final loss: {losses[-1]:.4f}")
+        logger.info(f"  Fitted noise: {likelihood.noise.item():.4f}")
         models.append((model, likelihood))
 
     logger.info(f"Model training completed. Models saved to {model_save_dir}")
@@ -463,8 +459,7 @@ def main():
         model_dir = Path(args.output_dir) / f"Iteration_{iteration-1}" / "models" / "gpytorch_singletaskgp_matern_25"
         models, scalers, train_x, train_y = train_gp_models(
             data_file=str(prev_data_file),
-            model_save_dir=str(model_dir),
-            smoke_test=args.smoke_test
+            model_save_dir=str(model_dir)
         )
 
         # Run optimization to generate Iteration N candidates

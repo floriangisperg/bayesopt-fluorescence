@@ -6,7 +6,6 @@ Contains acquisition function implementations and utilities for experimental pla
 
 from .qnehvi import create_qnehvi_acquisition, optimize_qnehvi
 from .utils import (
-    save_experiments_to_excel,
     update_experimental_database,
     generate_initial_design
 )
@@ -14,7 +13,6 @@ from .utils import (
 __all__ = [
     'create_qnehvi_acquisition',
     'optimize_qnehvi',
-    'save_experiments_to_excel',
     'update_experimental_database',
     'generate_initial_design'
 ]

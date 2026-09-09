@@ -83,13 +83,11 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
         train_y_single = train_y_standardized[:, i]
 
         # Train model
-        model, likelihood, losses = fit_gp_model(
+        model, likelihood = fit_gp_model(
             train_x=train_x_normalized,
             train_y=train_y_single,
             model_class=GPModel,
-            noise=ModelConfig.INITIAL_NOISE_LEVEL,
-            num_train_iters=ModelConfig.NUM_TRAINING_ITERATIONS,
-            lr=ModelConfig.LEARNING_RATE
+            noise=ModelConfig.INITIAL_NOISE_LEVEL
         )
 
         # Save model and likelihood
@@ -134,7 +132,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train GP models from experimental data')
     parser.add_argument('--data_file', type=str, required=True,
                        help='Excel file with experimental data')
-    parser.add_argument('--model_dir', type=str, default='models',
+    parser.add_argument('--model_dir', type=str, default='trained_models',
                        help='Directory to save trained models')
     parser.add_argument('--project_name', type=str, default='gpytorch_models',
                        help='Project name for model subdirectory')

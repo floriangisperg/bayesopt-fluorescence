@@ -9,7 +9,6 @@ from .gp_fitting import (
     fit_gp_model,
     save_gp_model,
     load_gp_model,
-    plot_training_loss,
     sort_objective_files
 )
 from .gp_validation import loocv_gp_model
@@ -19,7 +18,6 @@ __all__ = [
     'fit_gp_model',
     'save_gp_model',
     'load_gp_model',
-    'plot_training_loss',
     'sort_objective_files',
     'loocv_gp_model'
 ]
