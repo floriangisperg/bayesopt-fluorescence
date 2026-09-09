@@ -1,21 +1,52 @@
 """
 Gaussian Process model fitting and loading utilities.
 
-Provides functions for training GP models, saving/loading model states,
-and visualizing training progress.
+Provides functions for training GPs, and saving/loading model states.
+Saved models carry a fingerprint of their training data and configuration,
+which is verified on load so data or config drift cannot silently produce
+wrong predictions.
 """
 
+import hashlib
+import json
+import logging
 import os
 import re
-import logging
-from typing import Tuple, List
+from typing import List, Tuple
 
 import gpytorch
 import torch
-import torch.optim as optim
-import matplotlib.pyplot as plt
+from botorch.fit import fit_gpytorch_mll
+
+from config import ExperimentConfig, ModelConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _tensor_sha1(tensor: torch.Tensor) -> str:
+    """Content hash of a tensor, stable across runs for identical data."""
+    return hashlib.sha1(
+        tensor.detach().cpu().contiguous().numpy().tobytes()
+    ).hexdigest()
+
+
+def _config_snapshot() -> dict:
+    """The experiment-configuration state a GP was trained under.
+
+    Everything that changes how training inputs are mapped into model space
+    or how the kernel is built. Bounds and transformations shape the unit
+    space; KERNEL_NU selects the kernel family.
+    """
+    return {
+        "parameter_bounds": ExperimentConfig.PARAMETER_BOUNDS.tolist(),
+        "parameter_transformation": ExperimentConfig.PARAMETER_TRANSFORMATION,
+        "kernel_nu": ModelConfig.KERNEL_NU,
+    }
+
+
+def _config_sha1() -> str:
+    canonical = json.dumps(_config_snapshot(), sort_keys=True)
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
 
 
 def sort_objective_files(filenames: List[str]) -> List[str]:
@@ -41,8 +72,15 @@ def sort_objective_files(filenames: List[str]) -> List[str]:
 
 
 def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
-                  train_y_standardized: torch.Tensor, objective_idx: int = 0):
+                  train_y_standardized: torch.Tensor, objective_idx: int = 0,
+                  strict: bool = True):
     """Load a Gaussian Process model and its likelihood from file.
+
+    The model is reconstructed with the training data passed in here (GPyTorch
+    keeps it outside the state dict), so a fingerprint of the data and config
+    it was originally trained on is verified to catch drift: loading with
+    different data or a changed configuration would silently pair stale
+    hyperparameters with a different problem.
 
     Args:
         filepath: Path to the saved model file.
@@ -50,13 +88,16 @@ def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
         train_x_normalized: Normalized training inputs.
         train_y_standardized: Standardized training outputs.
         objective_idx: Index of the objective to load (for multi-output models).
+        strict: Raise on fingerprint mismatch. With ``strict=False`` a
+                mismatch is logged as a warning and the model still loads.
 
     Returns:
         Tuple of (model, likelihood).
 
     Raises:
         FileNotFoundError: If model file is not found.
-        ValueError: If saved file format is invalid.
+        ValueError: If saved file format is invalid, or (with ``strict=True``)
+            the training data or configuration does not match the checkpoint.
     """
     try:
         saved_data = torch.load(filepath)
@@ -66,6 +107,36 @@ def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
     # Validate saved data structure
     if 'model_state_dict' not in saved_data or 'likelihood_state_dict' not in saved_data:
         raise ValueError(f"Invalid model file format: {filepath}")
+
+    # Verify the checkpoint belongs to the data and config at hand
+    fingerprint = saved_data.get('training_data_fingerprint')
+    if fingerprint is None:
+        logger.info(
+            f"No training fingerprint stored in {filepath} (legacy "
+            "checkpoint); skipping data/config verification."
+        )
+    else:
+        mismatches = []
+        if fingerprint.get('train_x_sha1') != _tensor_sha1(train_x_normalized):
+            mismatches.append("the training inputs differ")
+        if fingerprint.get('train_y_sha1') != _tensor_sha1(
+                train_y_standardized[:, objective_idx]):
+            mismatches.append("the training targets differ")
+        if fingerprint.get('config_sha1') != _config_sha1():
+            mismatches.append(
+                "the experiment configuration differs (bounds, parameter "
+                "transformations, or kernel settings)"
+            )
+        if mismatches:
+            message = (
+                f"Checkpoint {filepath} does not match the data at hand: "
+                + " and ".join(mismatches)
+                + ". Retrain the models on the current data, or pass "
+                "strict=False to load anyway."
+            )
+            if strict:
+                raise ValueError(message)
+            logger.warning(message)
 
     # Create fresh likelihood object
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
@@ -94,6 +165,10 @@ def load_gp_model(filepath: str, model_class, train_x_normalized: torch.Tensor,
 def save_gp_model(model, likelihood, filepath: str):
     """Save a Gaussian Process model and its likelihood to file.
 
+    Stores a fingerprint of the training data and experiment configuration
+    alongside the state dicts, so ``load_gp_model`` can detect data or config
+    drift before the model is used.
+
     Args:
         model: Trained GP model.
         likelihood: Trained likelihood.
@@ -112,104 +187,56 @@ def save_gp_model(model, likelihood, filepath: str):
         'training_data_shape': {
             'train_x_shape': model.train_inputs[0].shape if model.train_inputs else None,
             'train_y_shape': model.train_targets.shape if hasattr(model, 'train_targets') else None
-        }
+        },
+        'training_data_fingerprint': {
+            'train_x_sha1': _tensor_sha1(model.train_inputs[0]),
+            'train_y_sha1': _tensor_sha1(model.train_targets),
+            'config_sha1': _config_sha1(),
+        },
+        'config_snapshot': _config_snapshot(),
     }, filepath)
 
     logger.info(f'Model and likelihood saved successfully to {filepath}')
 
 
 def fit_gp_model(train_x: torch.Tensor, train_y: torch.Tensor, model_class,
-                 noise: float = 0.01, num_train_iters: int = 1000, lr: float = 0.01,
-                 save_model: bool = False, filepath: str = None) -> Tuple[object, object, List[float]]:
+                 noise: float = 0.01) -> Tuple[object, object]:
     """Fit a Gaussian Process model to training data.
+
+    Hyperparameters are optimized by maximizing the exact marginal
+    log-likelihood with BoTorch's ``fit_gpytorch_mll`` (scipy L-BFGS-B, with
+    random restarts on failure). The optimizer runs to convergence, so there
+    is no learning rate or iteration budget to tune, and every caller —
+    model training and LOOCV alike — fits under the identical regime.
 
     Args:
         train_x: Input features.
         train_y: Target outputs.
         model_class: GP model class to be instantiated.
-        noise: Initial noise level for the likelihood.
-        num_train_iters: Number of training iterations.
-        lr: Learning rate for the optimizer.
-        save_model: Whether to save the model after training.
-        filepath: File path for saving the model.
+        noise: Initial noise level for the likelihood (starting point for the
+               optimizer; the fitted value may differ).
 
     Returns:
-        Tuple of (model, likelihood, losses).
+        Tuple of (model, likelihood).
     """
     # Initialize likelihood (noise is learnable during training)
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
     likelihood.noise = noise
     model = model_class(train_x, train_y, likelihood)
 
-    # Set to training mode
-    model.train()
-    likelihood.train()
-
-    # Optimizer and objective
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # Exact marginal log-likelihood objective
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
-    losses = []
-    for i in range(num_train_iters):
-        optimizer.zero_grad()
-        output = model(train_x)
-        loss = -mll(output, train_y)
-        # Ensure loss is a scalar
-        if loss.dim() > 0:
-            loss = loss.mean()
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
+    # Cap the optimizer budget in smoke-test mode; on the small datasets this
+    # workflow uses, the full fit converges quickly anyway.
+    optimizer_kwargs = None
+    if os.environ.get("SMOKE_TEST"):
+        optimizer_kwargs = {"options": {"maxiter": 100}}
+
+    fit_gpytorch_mll(mll, optimizer_kwargs=optimizer_kwargs)
 
     # Set to evaluation mode
     model.eval()
     likelihood.eval()
 
-    if save_model and filepath:
-        save_gp_model(model, likelihood, filepath)
-
-    return model, likelihood, losses
-
-
-def plot_training_loss(losses: List[float], path: str, make_plot: bool = True):
-    """Plot training loss over iterations.
-
-    Args:
-        losses: List of loss values during training.
-        path: Base path for saving the plot.
-        make_plot: Whether to save the plot to file.
-    """
-    plt.figure(figsize=(7.5, 2.5))
-    plt.plot(losses, label='Training Loss')
-    plt.xlabel('Iterations')
-    plt.ylabel('Loss')
-    plt.title('GP Training Loss Over Iterations')
-    plt.legend()
-
-    if make_plot:
-        plt.savefig(f"{path}_training_loss.png", dpi=300)
-    plt.close()
-
-
-def plot_predictions(test_x: torch.Tensor, test_y: torch.Tensor,
-                    predicted_y: torch.Tensor, path: str, make_plot: bool = False):
-    """Plot predictions vs actual values.
-
-    Args:
-        test_x: Test inputs.
-        test_y: True test outputs.
-        predicted_y: Predicted outputs.
-        path: Base path for saving the plot.
-        make_plot: Whether to save the plot to file.
-    """
-    plt.figure(figsize=(7.5, 2.5))
-    plt.plot(test_x, test_y, 'r*', label='Actual Data')
-    plt.plot(test_x, predicted_y, 'b-', label='Predicted Data')
-    plt.xlabel('Input Features')
-    plt.ylabel('Output Targets')
-    plt.title('Comparison of Predictions and Actual Data')
-    plt.legend()
-
-    if make_plot:
-        plt.savefig(f"{path}_pred_vs_actual.png", dpi=300)
-    plt.close()
+    return model, likelihood

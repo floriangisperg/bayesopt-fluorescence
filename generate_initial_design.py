@@ -7,18 +7,16 @@ loop using space-filling Latin Hypercube Sampling with maximin criterion
 optimization and physical constraints.
 """
 
-import os
-import logging
 import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
 
-from config import ExperimentConfig, ConstraintConfig, LoggingConfig, get_transposed_bounds
-from acquisition.utils import save_experiments_to_excel, generate_initial_design
-from constraints.urea_dilution import urea_constraint_callable, calculate_urea_refolding_concentration
+from acquisition.utils import generate_initial_design
+from config import ConstraintConfig, ExperimentConfig, LoggingConfig, get_transposed_bounds
+from constraints.urea_dilution import calculate_urea_refolding_concentration
 from data.transformation import build_transformer
 
 # Set up logging
@@ -64,13 +62,13 @@ def main():
     # Create transformer for parameter scaling (if needed)
     transformer = build_transformer(ExperimentConfig)
 
-    # Set up constraint callable if enabled
-    constraint_callable = None
+    # Set up the constraint-aware design strategy if enabled
+    design_strategy = "lhs"
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        constraint_callable = urea_constraint_callable
+        design_strategy = "constrained_lhd"
 
-    # Generate initial design with constraint-aware rejection sampling
+    # Generate initial design
     samples = generate_initial_design(
         n_samples=args.n_samples,
         bounds=bounds,
@@ -78,43 +76,44 @@ def main():
         seed=args.seed,
         n_candidates=args.n_candidates,
         use_maximin=not args.no_maximin,
-        constraint_callable=constraint_callable,
+        design_strategy=design_strategy,
         solubilization_urea=ConstraintConfig.SOLUBILIZATION_UREA
     )
 
     final_samples = samples
 
-    # Save to Excel
-    output_path = output_dir / f"{args.project_name}_experimental_plan.xlsx"
-    df = save_experiments_to_excel(final_samples, str(output_path))
+    # Build the complete experimental plan and write it once: parameters,
+    # derived urea refolding concentrations, and empty objective columns so
+    # the plan is ready to be filled in and accepted by train_models.py
+    # without manual column creation
+    df = pd.DataFrame(final_samples.numpy(), columns=ExperimentConfig.PARAMETER_NAMES)
 
-    # Print summary statistics
-    print(f"\nInitial Design Summary:")
-    print(f"Total samples: {len(df)}")
-    print(f"Saved to: {output_path}")
-    print(f"\nParameter ranges:")
-    for i, name in enumerate(ExperimentConfig.PARAMETER_NAMES):
-        print(f"{name}: {df[name].min():.2f} - {df[name].max():.2f}")
-
-    # Calculate and display urea refolding concentrations
     urea_refolding = [
         calculate_urea_refolding_concentration(row["Final Urea [M]"], row["Dilution Factor"])
         for _, row in df.iterrows()
     ]
-
     df["Urea Refolding [M]"] = urea_refolding
-    print(f"\nUrea Refolding Concentration:")
+
+    for obj_name in ExperimentConfig.OBJECTIVE_NAMES:
+        df[obj_name] = np.nan
+
+    output_path = output_dir / f"{args.project_name}_experimental_plan.xlsx"
+    df.to_excel(output_path, index=False)
+    logger.info(f"Saved {len(df)} experiments to {output_path}")
+
+    # Print summary statistics
+    print("\nInitial Design Summary:")
+    print(f"Total samples: {len(df)}")
+    print(f"Saved to: {output_path}")
+    print("\nParameter ranges:")
+    for i, name in enumerate(ExperimentConfig.PARAMETER_NAMES):
+        print(f"{name}: {df[name].min():.2f} - {df[name].max():.2f}")
+
+    print("\nUrea Refolding Concentration:")
     print(f"Min: {min(urea_refolding):.2f} M")
     print(f"Max: {max(urea_refolding):.2f} M")
     print(f"Mean: {np.mean(urea_refolding):.2f} M")
 
-    # Add empty objective columns so the plan is ready to be filled in and
-    # accepted by train_models.py without manual column creation
-    for obj_name in ExperimentConfig.OBJECTIVE_NAMES:
-        df[obj_name] = np.nan
-
-    # Save updated DataFrame with refolding concentrations and objective columns
-    df.to_excel(output_path, index=False)
     logger.info("Initial design generation completed successfully")
 
 

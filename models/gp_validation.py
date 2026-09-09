@@ -5,12 +5,13 @@ Provides leave-one-out cross-validation for GP model assessment.
 """
 
 import logging
-from typing import List
 
-import numpy as np
-import torch
 import gpytorch
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
+
+from .gp_fitting import fit_gp_model
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +50,11 @@ def loocv_gp_model(train_x: torch.Tensor, train_y: torch.Tensor,
         loo_train_x = train_x[mask]
         loo_train_y = train_y[mask][:, objective_idx]
 
-        # Train model on LOOCV data
-        from .gp_fitting import fit_gp_model
-        loo_model, loo_likelihood, _ = fit_gp_model(
+        # Refit with the same fitting routine as the production model, so the
+        # validation scores describe the model that is actually deployed.
+        loo_model, loo_likelihood = fit_gp_model(
             loo_train_x, loo_train_y, model_class,
-            noise=noise,
-            num_train_iters=500  # Faster training for LOOCV
+            noise=noise
         )
 
         # Predict left-out sample

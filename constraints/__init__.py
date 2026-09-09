@@ -6,10 +6,10 @@ experimental conditions.
 """
 
 from .urea_dilution import (
-    get_urea_linear_constraint,
     assert_urea_feasible,
     calculate_urea_refolding_concentration,
-    urea_constraint_callable
+    get_urea_linear_constraint,
+    urea_constraint_callable,
 )
 
 __all__ = [

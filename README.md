@@ -22,7 +22,7 @@ The optimization loop cycles through four steps:
 
 1. **Design** — generate an initial experimental plan using constraint-aware Latin hypercube sampling
 2. **Experiment** — run the refolding experiments and record spectroscopy-derived objectives
-3. **Train** — fit independent single-task Gaussian process models to each objective
+3. **Train** — fit independent single-task Gaussian process models to each objective (exact marginal likelihood, optimized to convergence)
 4. **Suggest** — use qNEHVI acquisition to propose the next batch of experiments
 
 Each iteration refines the surrogate models and steers sampling toward the Pareto front.
@@ -92,6 +92,15 @@ See [workshop/CLI_GUIDE.md](workshop/CLI_GUIDE.md) for the full command sequence
 uv run python workshop/demo_workflow.py --n_iterations 5 --n_initial 12 --n_candidates 4
 ```
 
+### Run the test suite
+
+```bash
+uv run pytest        # tests
+uv run ruff check .  # lint
+```
+
+Covers the constraint math (linear acquisition-space form vs. physical feasibility), parameter-transform round-trips, initial-design strategies and feasibility, checkpoint fingerprinting, data validation, and an end-to-end qNEHVI smoke test. Continuous integration runs both on every push and pull request.
+
 ## CLI Reference
 
 ### Generate the initial design
@@ -114,21 +123,22 @@ After filling in `Delta AEW` and `p_proxy` in the spreadsheet:
 ```bash
 uv run python train_models.py \
     --data_file results/iteration_0_experimental_plan.xlsx \
-    --model_dir models \
+    --model_dir trained_models \
     --project_name iteration_0_models
 ```
 
-Outputs: trained `.pth` model files and `.pkl` scaler files in `models/iteration_0_models/`.
+Outputs: trained `.pth` model files and `.pkl` scaler files in `trained_models/iteration_0_models/`.
 
 ### Generate the next candidates
 
 ```bash
 uv run python run_optimization.py \
     --data_file results/iteration_0_experimental_plan.xlsx \
-    --model_dir models/iteration_0_models \
+    --model_dir trained_models/iteration_0_models \
     --output_dir results \
     --n_candidates 4 \
-    --iteration 1
+    --iteration 1 \
+    --seed 42
 ```
 
 Outputs: `results/Iteration_1/Iteration_1_experimental_plan.xlsx` and a running `results/experimental_database.xlsx`.
@@ -152,9 +162,9 @@ Default experimental parameters: **DTT** (0–25 mM), **GSSG** (0–2.5 mM), **D
 
 The physical urea constraint is controlled by `ConstraintConfig.ENABLE_UREA_CONSTRAINT`.
 
-- Initial designs use a constrained Latin hypercube strategy specialized for the urea constraint.
-- Bayesian optimization passes the urea condition as a nonlinear inequality constraint to the acquisition optimizer.
-- A post-processing repair step exists as a fallback for numerical edge cases.
+- Initial designs use a constrained Latin hypercube strategy specialized for the urea constraint (dilution draws are restricted to the range where a feasible urea exists; the design fails loudly if the constraint cannot be met within the bounds).
+- Bayesian optimization passes the urea condition as an exact linear inequality constraint to the acquisition optimizer.
+- Exported candidates are validated against the constraint; a violation stops the run instead of being repaired, since it signals an upstream numerical failure.
 
 Feasibility condition: `final_urea * dilution_factor > solubilization_urea` (default: `> 8.0`).
 
@@ -171,6 +181,7 @@ bayesopt-fluorescence/
 ├── constraints/               # Urea-dilution physical constraint
 ├── data/                      # Preprocessing and scaling
 ├── models/                    # GP model, fitting, and validation
+├── tests/                     # Pytest suite (constraints, transformations, smoke test)
 └── workshop/                  # Notebook, demo, and workshop materials
     ├── README.md
     ├── CLI_GUIDE.md
@@ -183,6 +194,8 @@ bayesopt-fluorescence/
 
 **Missing imports** — run `uv sync` to install dependencies.
 
-**Missing required columns** — training expects all parameter columns and both objective columns in the Excel file.
+**Missing required columns** — training expects all parameter columns and both objective columns in the Excel file. Training also fails with a list of row numbers if any objective value is still missing, and warns about duplicated experiments.
 
 **Model directory errors** — make sure `--model_dir` points to the exact subdirectory created by `train_models.py`.
+
+**Model/data mismatch** — every checkpoint stores a fingerprint of its training data and configuration. `run_optimization.py` refuses to load models with different data or a changed `config.py`; retrain the models on the current data (or see `load_gp_model(..., strict=False)` to override).

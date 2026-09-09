@@ -7,12 +7,15 @@ constraints for physical feasibility.
 """
 
 import logging
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
-from botorch.acquisition.multi_objective import qLogNoisyExpectedHypervolumeImprovement
-from botorch.acquisition.multi_objective import IdentityMCMultiOutputObjective
+from botorch.acquisition.multi_objective import (
+    IdentityMCMultiOutputObjective,
+    qLogNoisyExpectedHypervolumeImprovement,
+)
 from botorch.optim import optimize_acqf
+
 from config import OptimizationConfig
 
 logger = logging.getLogger(__name__)
@@ -52,7 +55,8 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
                     batch_size: int = 4, mc_samples: int = 2048,
                     num_restarts: int = 200, raw_samples: int = 2048,
                     sequential: bool = True,
-                    inequality_constraints: Optional[List[Tuple[torch.Tensor, torch.Tensor, float]]] = None) -> torch.Tensor:
+                    inequality_constraints: Optional[List[Tuple[torch.Tensor, torch.Tensor, float]]] = None
+                    ) -> torch.Tensor:
     """Optimize the qNEHVI acquisition function.
 
     Args:

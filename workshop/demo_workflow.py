@@ -13,12 +13,13 @@ Usage:
     python demo_workflow.py [--n_iterations N] [--n_initial N] [--smoke_test]
 """
 
-import os
-import sys
-import shutil
-import logging
 import argparse
+import logging
+import os
+import shutil
+import sys
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import torch
@@ -29,20 +30,22 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 # Import project modules
-from config import (
-    ExperimentConfig, ModelConfig, OptimizationConfig, ConstraintConfig, LoggingConfig
-)
-from acquisition.utils import generate_initial_design
-from constraints import (
-    get_urea_linear_constraint, assert_urea_feasible
-)
-from constraints.urea_dilution import urea_constraint_callable
-from data.preprocessing import prepare_data, standardize_reference_point
-from models import GPModel, fit_gp_model, save_gp_model, load_gp_model, sort_objective_files
 from botorch.models import ModelListGP
 from botorch.sampling import SobolQMCNormalSampler
+
 from acquisition import create_qnehvi_acquisition, optimize_qnehvi
+from acquisition.utils import generate_initial_design
+from config import (
+    ConstraintConfig,
+    ExperimentConfig,
+    LoggingConfig,
+    ModelConfig,
+    OptimizationConfig,
+)
+from constraints import assert_urea_feasible, get_urea_linear_constraint
+from data.preprocessing import load_scalers, prepare_data, save_scalers, standardize_reference_point
 from data.transformation import build_transformer
+from models import GPModel, fit_gp_model, load_gp_model, save_gp_model, sort_objective_files
 
 # Set up logging
 logging.basicConfig(
@@ -128,10 +131,10 @@ def generate_initial_design_with_mock_results(
     bounds = transformer.get_physical_bounds(as_tensor=True)
 
     # Apply the same constraint-aware initial design as the CLI workflow
-    constraint_callable = None
+    design_strategy = "lhs"
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        constraint_callable = urea_constraint_callable
+        design_strategy = "constrained_lhd"
 
     # Generate initial design using LHS
     samples = generate_initial_design(
@@ -141,7 +144,7 @@ def generate_initial_design_with_mock_results(
         seed=seed,
         n_candidates=50,  # Reduced for testing
         use_maximin=True,
-        constraint_callable=constraint_callable,
+        design_strategy=design_strategy,
         solubilization_urea=ConstraintConfig.SOLUBILIZATION_UREA
     )
 
@@ -168,21 +171,20 @@ def generate_initial_design_with_mock_results(
     logger.info(f"Saved initial design with mock results to {results_file}")
 
     # Print summary
-    print(f"\nInitial Design Summary:")
+    print("\nInitial Design Summary:")
     print(f"  Total samples: {len(df)}")
-    print(f"  Objective 1 ({ExperimentConfig.OBJECTIVE_NAMES[0]}): {df[ExperimentConfig.OBJECTIVE_NAMES[0]].mean():.3f} ± {df[ExperimentConfig.OBJECTIVE_NAMES[0]].std():.3f}")
-    print(f"  Objective 2 ({ExperimentConfig.OBJECTIVE_NAMES[1]}): {df[ExperimentConfig.OBJECTIVE_NAMES[1]].mean():.3f} ± {df[ExperimentConfig.OBJECTIVE_NAMES[1]].std():.3f}")
+    for i, obj_name in enumerate(ExperimentConfig.OBJECTIVE_NAMES):
+        print(f"  Objective {i+1} ({obj_name}): {df[obj_name].mean():.3f} ± {df[obj_name].std():.3f}")
 
     return df
 
 
 def train_gp_models(
     data_file: str,
-    model_save_dir: str,
-    smoke_test: bool = False
+    model_save_dir: str
 ):
     """Train GP models from experimental data."""
-    logger.info(f"=== STEP 2: Training GP Models ===")
+    logger.info("=== STEP 2: Training GP Models ===")
 
     # Load data
     df = pd.read_excel(data_file)
@@ -203,7 +205,6 @@ def train_gp_models(
 
     # Train models for each objective
     models = []
-    n_iters = 100 if smoke_test else ModelConfig.NUM_TRAINING_ITERATIONS
 
     for i, obj_name in enumerate(objective_names):
         logger.info(f"Training model {i+1}/{len(objective_names)}: {obj_name}")
@@ -212,13 +213,11 @@ def train_gp_models(
         train_y_single = train_y_standardized[:, i]
 
         # Train model
-        model, likelihood, losses = fit_gp_model(
+        model, likelihood = fit_gp_model(
             train_x=train_x_normalized,
             train_y=train_y_single,
             model_class=GPModel,
-            noise=ModelConfig.INITIAL_NOISE_LEVEL,
-            num_train_iters=n_iters,
-            lr=ModelConfig.LEARNING_RATE
+            noise=ModelConfig.INITIAL_NOISE_LEVEL
         )
 
         # Save model
@@ -227,12 +226,11 @@ def train_gp_models(
         save_gp_model(model, likelihood, model_path)
 
         # Save scaler
-        from data.preprocessing import save_scalers
         scaler_name = f"scaler_{i+1}_{obj_name.replace(' ', '_').lower()}.pkl"
         scaler_path = os.path.join(model_save_dir, scaler_name)
         save_scalers([scalers[i]], scaler_path)
 
-        logger.info(f"  Final loss: {losses[-1]:.4f}")
+        logger.info(f"  Fitted noise: {likelihood.noise.item():.4f}")
         models.append((model, likelihood))
 
     logger.info(f"Model training completed. Models saved to {model_save_dir}")
@@ -285,7 +283,6 @@ def run_bayesian_optimization(
         logger.info(f"  Loaded: {model_file}")
 
     for i, scaler_file in enumerate(scaler_files):
-        from data.preprocessing import load_scalers
         scaler_path = os.path.join(model_dir, scaler_file)
         scaler = load_scalers(scaler_path)[0]
         scalers.append(scaler)
@@ -381,7 +378,7 @@ def run_bayesian_optimization(
     print(f"  Total experiments: {len(combined_df)}")
 
     # Print predicted vs actual performance
-    print(f"\n  New Candidate Performance:")
+    print("\n  New Candidate Performance:")
     for i, (_, row) in enumerate(new_experiments_df.iterrows()):
         print(f"    Candidate {i+1}:")
         print(f"      {ExperimentConfig.OBJECTIVE_NAMES[0]}: {row[ExperimentConfig.OBJECTIVE_NAMES[0]]:.3f}")
@@ -391,9 +388,11 @@ def run_bayesian_optimization(
     best_idx_1 = combined_df[ExperimentConfig.OBJECTIVE_NAMES[0]].idxmax()
     best_idx_2 = combined_df[ExperimentConfig.OBJECTIVE_NAMES[1]].idxmax()
 
-    print(f"\n  Best Results So Far:")
-    print(f"    {ExperimentConfig.OBJECTIVE_NAMES[0]}: {combined_df.loc[best_idx_1, ExperimentConfig.OBJECTIVE_NAMES[0]]:.3f}")
-    print(f"    {ExperimentConfig.OBJECTIVE_NAMES[1]}: {combined_df.loc[best_idx_2, ExperimentConfig.OBJECTIVE_NAMES[1]]:.3f}")
+    print("\n  Best Results So Far:")
+    print(f"    {ExperimentConfig.OBJECTIVE_NAMES[0]}: "
+          f"{combined_df.loc[best_idx_1, ExperimentConfig.OBJECTIVE_NAMES[0]]:.3f}")
+    print(f"    {ExperimentConfig.OBJECTIVE_NAMES[1]}: "
+          f"{combined_df.loc[best_idx_2, ExperimentConfig.OBJECTIVE_NAMES[1]]:.3f}")
 
     return combined_df
 
@@ -423,7 +422,7 @@ def main():
     logger.info("=" * 70)
     logger.info("BAYESIAN OPTIMIZATION WORKFLOW INTEGRATION TEST")
     logger.info("=" * 70)
-    logger.info(f"Configuration:")
+    logger.info("Configuration:")
     logger.info(f"  Iterations: {args.n_iterations}")
     logger.info(f"  Initial samples: {args.n_initial}")
     logger.info(f"  Candidates per iteration: {args.n_candidates}")
@@ -437,7 +436,7 @@ def main():
         shutil.rmtree(args.output_dir)
 
     # STEP 1: Generate Iteration_0 (initial LHS design)
-    df = generate_initial_design_with_mock_results(
+    generate_initial_design_with_mock_results(
         n_samples=args.n_initial,
         output_dir=args.output_dir,
         seed=args.seed
@@ -463,12 +462,11 @@ def main():
         model_dir = Path(args.output_dir) / f"Iteration_{iteration-1}" / "models" / "gpytorch_singletaskgp_matern_25"
         models, scalers, train_x, train_y = train_gp_models(
             data_file=str(prev_data_file),
-            model_save_dir=str(model_dir),
-            smoke_test=args.smoke_test
+            model_save_dir=str(model_dir)
         )
 
         # Run optimization to generate Iteration N candidates
-        df = run_bayesian_optimization(
+        run_bayesian_optimization(
             data_file=str(prev_data_file),
             model_dir=str(model_dir),
             output_dir=args.output_dir,
@@ -488,7 +486,7 @@ def main():
                  f"Iteration_{final_iter}_analysis_results_combined.xlsx"
     final_df = pd.read_excel(final_file)
 
-    print(f"\nFinal Summary:")
+    print("\nFinal Summary:")
     print(f"  Total experiments: {len(final_df)}")
     print(f"  Initial LHS samples (Iteration 0): {args.n_initial}")
     print(f"  BO iterations: {args.n_iterations - 1}")
@@ -500,7 +498,7 @@ def main():
         best_idx = final_df[obj_name].idxmax()
         print(f"\n  Best {obj_name}:")
         print(f"    Value: {best_val:.3f}")
-        print(f"    Parameters:")
+        print("    Parameters:")
         for param_name in ExperimentConfig.PARAMETER_NAMES:
             print(f"      {param_name}: {final_df.loc[best_idx, param_name]:.3f}")
 

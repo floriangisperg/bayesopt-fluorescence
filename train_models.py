@@ -6,18 +6,17 @@ This script trains single-task GP models for each objective using
 experimental data from previous iterations.
 """
 
-import os
-import logging
 import argparse
+import logging
+import os
 from pathlib import Path
 
 import pandas as pd
-import torch
 
-from config import ExperimentConfig, ModelConfig, LoggingConfig
-from data.preprocessing import prepare_data
+from config import ExperimentConfig, LoggingConfig, ModelConfig
+from data.preprocessing import prepare_data, save_scalers, validate_experiment_data
 from data.transformation import ParameterTransformer, build_transformer
-from models import GPModel, fit_gp_model, save_gp_model, loocv_gp_model
+from models import GPModel, fit_gp_model, loocv_gp_model, save_gp_model
 
 # Set up logging
 logging.basicConfig(
@@ -46,6 +45,9 @@ def load_experimental_data(data_file: str) -> pd.DataFrame:
     missing_cols = (required_param_cols | required_obj_cols) - set(df.columns)
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
+
+    # Objectives must be filled in, and duplicates deserve a warning
+    validate_experiment_data(df)
 
     logger.info(f"Loaded {len(df)} experimental samples")
     return df
@@ -83,13 +85,11 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
         train_y_single = train_y_standardized[:, i]
 
         # Train model
-        model, likelihood, losses = fit_gp_model(
+        model, likelihood = fit_gp_model(
             train_x=train_x_normalized,
             train_y=train_y_single,
             model_class=GPModel,
-            noise=ModelConfig.INITIAL_NOISE_LEVEL,
-            num_train_iters=ModelConfig.NUM_TRAINING_ITERATIONS,
-            lr=ModelConfig.LEARNING_RATE
+            noise=ModelConfig.INITIAL_NOISE_LEVEL
         )
 
         # Save model and likelihood
@@ -98,7 +98,6 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
         save_gp_model(model, likelihood, model_path)
 
         # Save scaler
-        from data.preprocessing import save_scalers
         scaler_name = f"scaler_{i+1}_{obj_name.replace(' ', '_').lower()}.pkl"
         scaler_path = os.path.join(model_save_dir, scaler_name)
         save_scalers([scalers[i]], scaler_path)
@@ -134,7 +133,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train GP models from experimental data')
     parser.add_argument('--data_file', type=str, required=True,
                        help='Excel file with experimental data')
-    parser.add_argument('--model_dir', type=str, default='models',
+    parser.add_argument('--model_dir', type=str, default='trained_models',
                        help='Directory to save trained models')
     parser.add_argument('--project_name', type=str, default='gpytorch_models',
                        help='Project name for model subdirectory')
@@ -157,13 +156,13 @@ def main():
     models, scalers, validation_results = train_objective_models(df, transformer, str(model_save_dir))
 
     # Print summary
-    print(f"\nTraining Summary:")
+    print("\nTraining Summary:")
     print(f"Models trained: {len(models)}")
     print(f"Training samples: {len(df)}")
     print(f"Models saved to: {model_save_dir}")
 
     if validation_results:
-        print(f"\nValidation Results:")
+        print("\nValidation Results:")
         for obj_name, scores in validation_results.items():
             print(f"{obj_name}:")
             print(f"  RMSE: {scores['rmse']:.4f}")

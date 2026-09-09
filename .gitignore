@@ -39,16 +39,19 @@ env/
 *.xlsx
 *.png
 
+# related literature
+publication/
+
 # Tool specific
 .claude/
 .pytest_cache/
+.ruff_cache/
 .serena/
 .virtual_documents/
 
 # Runtime outputs
 results/
-models/*.pth
-models/*.pkl
+trained_models/
 test_results/
 workshop/workshop_results/
 
