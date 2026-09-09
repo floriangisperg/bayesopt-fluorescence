@@ -48,6 +48,13 @@ class ExperimentConfig:
         "p_proxy"
     ]
 
+    # Direction per objective ("maximize" or "minimize"), ordered like
+    # OBJECTIVE_NAMES. Used by campaign reporting and Pareto analysis.
+    OBJECTIVE_DIRECTIONS: List[str] = [
+        "maximize",
+        "maximize"
+    ]
+
 # BO optimization hyperparameters
 class OptimizationConfig:
     """Configuration for Bayesian optimization parameters."""
@@ -57,6 +64,12 @@ class OptimizationConfig:
     # It is mapped to standardized model space at runtime with the fitted
     # objective scalers (see data.preprocessing.standardize_reference_point).
     REFERENCE_POINT: List[float] = [0.0, 0.0]
+
+    # Derive the qNEHVI reference point from the observed data instead of
+    # using REFERENCE_POINT: the worst observed value per objective minus a
+    # margin of REFERENCE_POINT_MARGIN_FRACTION times the observed span.
+    AUTO_REFERENCE_POINT: bool = False
+    REFERENCE_POINT_MARGIN_FRACTION: float = 0.1
 
     # Acquisition function optimization
     BATCH_SIZE: int = 4

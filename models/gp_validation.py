@@ -89,13 +89,18 @@ def loocv_gp_model(train_x: torch.Tensor, train_y: torch.Tensor,
     ss_tot = np.sum((actual_values - np.mean(actual_values)) ** 2)
     r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
-    # Standardized RMSE (in original scale)
-    # This requires inverting the standardization
+    # Original-scale per-sample outputs: the mean shifts and scales linearly
+    # under the standardizer, so the standard deviation carries the scale
+    # factor only. Kept per sample for calibration plots and reports.
     if hasattr(scaler, 'inverse_transform'):
         pred_original = scaler.inverse_transform(predictions.reshape(-1, 1)).flatten()
         actual_original = scaler.inverse_transform(actual_values.reshape(-1, 1)).flatten()
+        std_original = uncertainties * float(getattr(scaler, "scale_", np.array([1.0]))[0])
         rmse_original = np.sqrt(np.mean((pred_original - actual_original) ** 2))
     else:
+        pred_original = predictions
+        actual_original = actual_values
+        std_original = uncertainties
         rmse_original = rmse
 
     validation_scores = {
@@ -104,7 +109,15 @@ def loocv_gp_model(train_x: torch.Tensor, train_y: torch.Tensor,
         'r2': r2,
         'rmse_original_scale': rmse_original,
         'mean_uncertainty': np.mean(uncertainties),
-        'coverage_95': np.mean(np.abs(predictions - actual_values) <= 1.96 * uncertainties)
+        'coverage_95': np.mean(np.abs(predictions - actual_values) <= 1.96 * uncertainties),
+        # Per-sample values for reports and calibration/residual plots
+        'predictions_standardized': predictions.tolist(),
+        'actual_standardized': actual_values.tolist(),
+        'uncertainties_standardized': uncertainties.tolist(),
+        'predictions_original': pred_original.tolist(),
+        'actual_original': actual_original.tolist(),
+        'uncertainties_original': std_original.tolist(),
+        'residuals_original': (actual_original - pred_original).tolist(),
     }
 
     logger.info(f"LOOCV Results - RMSE: {rmse:.4f}, R²: {r2:.4f}, Coverage: {validation_scores['coverage_95']:.4f}")

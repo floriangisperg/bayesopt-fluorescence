@@ -13,10 +13,28 @@ from pathlib import Path
 
 import pandas as pd
 
+from analysis import plot_calibration_curve, plot_residuals_by_parameter, save_run_metadata
+from analysis.metadata import file_sha256
 from config import ExperimentConfig, LoggingConfig, ModelConfig
 from data.preprocessing import prepare_data, save_scalers, validate_experiment_data
 from data.transformation import ParameterTransformer, build_transformer
 from models import GPModel, fit_gp_model, loocv_gp_model, save_gp_model
+
+
+def extract_ard_lengthscales(model, parameter_names):
+    """Extract ARD lengthscales from the fitted kernel.
+
+    One lengthscale per input dimension; shorter lengthscales indicate the
+    model relies more on that parameter. Relevance is shown as the inverse
+    for easier ranking.
+    """
+    base_kernel = model.covar_module.base_kernel
+    lengthscale = base_kernel.lengthscale.detach().cpu().numpy().reshape(-1)
+    return pd.DataFrame({
+        "Parameter": parameter_names,
+        "ARD Lengthscale": lengthscale,
+        "Relative Relevance": 1.0 / lengthscale,
+    }).sort_values("Relative Relevance", ascending=False)
 
 # Set up logging
 logging.basicConfig(
@@ -97,6 +115,15 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
         model_path = os.path.join(model_save_dir, model_name)
         save_gp_model(model, likelihood, model_path)
 
+        # Export ARD lengthscales as a per-objective parameter relevance table
+        lengthscale_df = extract_ard_lengthscales(model, parameter_names)
+        lengthscale_df.insert(0, "Objective", obj_name)
+        lengthscale_path = os.path.join(
+            model_save_dir,
+            f"objective_{i+1}_{obj_name.replace(' ', '_').lower()}_lengthscales.xlsx",
+        )
+        lengthscale_df.to_excel(lengthscale_path, index=False)
+
         # Save scaler
         scaler_name = f"scaler_{i+1}_{obj_name.replace(' ', '_').lower()}.pkl"
         scaler_path = os.path.join(model_save_dir, scaler_name)
@@ -117,6 +144,30 @@ def train_objective_models(df: pd.DataFrame, transformer: ParameterTransformer, 
                 make_plot=True
             )
             validation_results[obj_name] = cv_scores
+
+            # Export per-sample validation table and diagnostic plots
+            validation_table = pd.DataFrame({
+                "Actual Standardized": cv_scores["actual_standardized"],
+                "Predicted Standardized": cv_scores["predictions_standardized"],
+                "Uncertainty Standardized": cv_scores["uncertainties_standardized"],
+                "Actual Original": cv_scores["actual_original"],
+                "Predicted Original": cv_scores["predictions_original"],
+                "Uncertainty Original": cv_scores["uncertainties_original"],
+                "Residual Original": cv_scores["residuals_original"],
+            })
+            validation_table.to_excel(f"{base_path}_validation_table.xlsx", index=False)
+            plot_calibration_curve(
+                validation_table["Actual Original"].to_numpy(),
+                validation_table["Predicted Original"].to_numpy(),
+                validation_table["Uncertainty Original"].to_numpy(),
+                f"{base_path}_calibration.png",
+            )
+            plot_residuals_by_parameter(
+                df[parameter_names].reset_index(drop=True),
+                validation_table["Residual Original"].to_numpy(),
+                f"{base_path}_residuals_by_parameter.png",
+                objective_name=obj_name,
+            )
 
             logger.info(f"CV Results for {obj_name}:")
             logger.info(f"  RMSE: {cv_scores['rmse']:.4f}")
@@ -168,6 +219,32 @@ def main():
             print(f"  RMSE: {scores['rmse']:.4f}")
             print(f"  R²: {scores['r2']:.4f}")
             print(f"  Coverage: {scores['coverage_95']:.4f}")
+
+    # Run metadata for traceability: software versions, configuration,
+    # and the exact data file (with content hash) behind this training run
+    save_run_metadata(
+        os.path.join(str(model_save_dir), "training_metadata.json"),
+        command="train_models.py",
+        config={
+            "parameter_names": ExperimentConfig.PARAMETER_NAMES,
+            "objective_names": ExperimentConfig.OBJECTIVE_NAMES,
+            "objective_directions": ExperimentConfig.OBJECTIVE_DIRECTIONS,
+            "kernel_nu": ModelConfig.KERNEL_NU,
+            "initial_noise_level": ModelConfig.INITIAL_NOISE_LEVEL,
+            "cross_validation_enabled": ModelConfig.ENABLE_CROSS_VALIDATION,
+        },
+        inputs={
+            "data_file": args.data_file,
+            "data_file_sha256": file_sha256(args.data_file),
+        },
+        extra={
+            "n_samples": len(df),
+            "validation_summary": {
+                name: {key: scores[key] for key in ("rmse", "r2", "coverage_95")}
+                for name, scores in validation_results.items()
+            },
+        },
+    )
 
     logger.info("Model training completed successfully")
 

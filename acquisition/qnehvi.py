@@ -7,6 +7,7 @@ constraints for physical feasibility.
 """
 
 import logging
+import time
 from typing import List, Optional, Tuple
 
 import torch
@@ -55,8 +56,8 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
                     batch_size: int = 4, mc_samples: int = 2048,
                     num_restarts: int = 200, raw_samples: int = 2048,
                     sequential: bool = True,
-                    inequality_constraints: Optional[List[Tuple[torch.Tensor, torch.Tensor, float]]] = None
-                    ) -> torch.Tensor:
+                    inequality_constraints: Optional[List[Tuple[torch.Tensor, torch.Tensor, float]]] = None,
+                    return_metadata: bool = False):
     """Optimize the qNEHVI acquisition function.
 
     Args:
@@ -71,19 +72,33 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
                         ``(indices, coefficients, rhs)``. Initial conditions are
                         sampled from the feasible polytope and candidates are
                         verified (and projected) by BoTorch.
+        return_metadata: Also return a metadata dict (optimizer settings,
+                        runtime, final acquisition value) for run reporting.
 
     Returns:
-        Optimized candidate points (batch_size x d).
+        Optimized candidate points (batch_size x d), or a tuple
+        ``(candidates, metadata)`` when ``return_metadata`` is True.
     """
     logger.info(f"Optimizing qNEHVI with batch_size={batch_size}, mc_samples={mc_samples}")
+
+    started_at = time.perf_counter()
+    metadata = {
+        "batch_size": batch_size,
+        "mc_samples": mc_samples,
+        "num_restarts": num_restarts,
+        "raw_samples": raw_samples,
+        "sequential": sequential,
+        "linear_constraints": len(inequality_constraints or []),
+    }
 
     if inequality_constraints:
         logger.info(f"Using {len(inequality_constraints)} linear constraint(s)")
 
     batch_limit = OptimizationConfig.ACQF_OPTIONS.get("batch_limit", 5)
     maxiter = OptimizationConfig.ACQF_OPTIONS.get("maxiter", 200)
+    metadata["options"] = {"batch_limit": batch_limit, "maxiter": maxiter}
 
-    candidates, _ = optimize_acqf(
+    candidates, acq_value = optimize_acqf(
         acq_function=acq_function,
         bounds=bounds,
         q=batch_size,
@@ -94,5 +109,13 @@ def optimize_qnehvi(acq_function, bounds: torch.Tensor,
         inequality_constraints=inequality_constraints
     )
 
+    metadata["runtime_seconds"] = time.perf_counter() - started_at
+    if torch.is_tensor(acq_value):
+        metadata["final_acquisition_value"] = acq_value.detach().cpu().reshape(-1).tolist()
+    else:
+        metadata["final_acquisition_value"] = acq_value
+
     logger.info(f"Generated {candidates.shape[0]} candidate points")
+    if return_metadata:
+        return candidates, metadata
     return candidates
