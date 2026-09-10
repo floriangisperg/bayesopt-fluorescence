@@ -20,7 +20,7 @@ The paper demonstrates that this workflow achieves ~3.5x higher product concentr
 
 The optimization loop cycles through four steps:
 
-1. **Design** — generate an initial experimental plan using constraint-aware Latin hypercube sampling
+1. **Design** — generate an initial experimental plan covering the feasible region
 2. **Experiment** — run the refolding experiments and record spectroscopy-derived objectives
 3. **Train** — fit independent single-task Gaussian process models to each objective (exact marginal likelihood, optimized to convergence)
 4. **Suggest** — use qNEHVI acquisition to propose the next batch of experiments
@@ -163,7 +163,16 @@ Default experimental parameters: **DTT** (0–25 mM), **GSSG** (0–2.5 mM), **D
 
 The physical urea constraint is controlled by `ConstraintConfig.ENABLE_UREA_CONSTRAINT`.
 
-- Initial designs use a constrained Latin hypercube strategy specialized for the urea constraint (dilution draws are restricted to the range where a feasible urea exists; the design fails loudly if the constraint cannot be met within the bounds).
+- Initial designs default to `feasible_coverage`: filter a scrambled Sobol pool by urea feasibility, greedily select well-spaced experiments, and refine cluster centers onto feasible pool points to improve interior coverage. Across seeded starts and refinements, select the design with the smallest estimated largest unsampled gap. Distances use normalized **user-space** coordinates (reciprocal dilution by default). This targets joint feasible-region coverage; it is not a strict Latin hypercube or a guarantee of global optimality.
+- The pool contains at least 2,048 feasible points (or 64 per experiment for larger designs). `--n_candidates` controls the number of selection starts. `--no_maximin` skips selection and uses the first feasible Sobol points. Filtering and selection do not preserve the original Sobol sequence's balance guarantees.
+- The previous conditional LHD is available with `--design_strategy constrained_lhd`. It preserves independent-parameter and dilution stratification, but not global final-urea stratification. It can also be useful for very narrow feasible regions where the coverage pool cannot be filled; the new strategy fails explicitly in that case.
+
+The coverage regression compares 20-point designs over five seeds using 30 selection starts,
+evaluated on a separate feasible Sobol pool. For the default bounds, the new method reduced
+the average worst-case nearest-experiment distance by about 18% and the average distance by
+about 12%. These are geometric coverage measurements, not evidence of improved experimental
+objectives or a guarantee for other parameter spaces. Pool generation uses SciPy's
+[scrambled Sobol sampler](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.qmc.Sobol.html).
 - Bayesian optimization passes the urea condition as an exact linear inequality constraint to the acquisition optimizer.
 - Exported candidates are validated against the constraint; a violation stops the run instead of being repaired, since it signals an upstream numerical failure.
 
@@ -174,7 +183,7 @@ Feasibility condition: `final_urea * dilution_factor >= solubilization_urea` (de
 ```text
 bayesopt-fluorescence/
 ├── config.py                  # Centralized configuration
-├── generate_initial_design.py # LHS initial design
+├── generate_initial_design.py # Feasible coverage / LHS initial design
 ├── train_models.py            # GP model training
 ├── run_optimization.py        # qNEHVI candidate generation
 ├── pyproject.toml             # Dependencies and project metadata
@@ -200,3 +209,13 @@ bayesopt-fluorescence/
 **Model directory errors** — make sure `--model_dir` points to the exact subdirectory created by `train_models.py`.
 
 **Model/data mismatch** — every checkpoint stores a fingerprint of its training data and configuration. `run_optimization.py` refuses to load models with different data or a changed `config.py`; retrain the models on the current data (or see `load_gp_model(..., strict=False)` to override).
+
+Optimization also compares saved objective scalers with scalers fitted to the current measurements,
+so shifts or rescaling that leave standardized targets unchanged are detected. This check works
+with existing scaler files; retrain if a mismatch is reported.
+
+Training inputs must be numeric, finite, within configured bounds, and urea-feasible when that
+constraint is enabled. Missing objectives are rejected for training; optimization can skip
+unmeasured rows. Newly suggested experiments receive unique IDs across batches, while existing
+IDs are preserved. Single-point initial designs are supported, and rejection sampling fails
+explicitly if it cannot supply the requested number of feasible experiments.

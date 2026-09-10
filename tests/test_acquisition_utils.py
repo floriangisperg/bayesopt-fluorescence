@@ -195,3 +195,56 @@ def test_update_experimental_database_accumulates(tmp_path):
     # The file on disk matches the accumulated frame
     on_disk = pd.read_excel(path)
     pd.testing.assert_frame_equal(on_disk, out)
+
+
+@pytest.mark.parametrize("strategy", ["lhs", "constrained_lhd", "rejection"])
+def test_single_sample_design(bounds_tensor, strategy):
+    samples = generate_initial_design(
+        1, bounds_tensor, build_transformer(ExperimentConfig), design_strategy=strategy,
+        constraint_callable=urea_constraint_callable if strategy == "rejection" else None,
+    )
+    assert samples.shape == (1, N_PARAMS)
+    assert torch.isfinite(samples).all()
+
+
+@pytest.mark.parametrize("name", ["n_samples", "n_candidates", "oversampling_factor"])
+@pytest.mark.parametrize("value", [0, -1, 1.5])
+def test_invalid_design_counts(bounds_tensor, name, value):
+    kwargs = {"n_samples": 4, "n_candidates": 2, "oversampling_factor": 2}
+    kwargs[name] = value
+    with pytest.raises(ValueError, match=name):
+        generate_initial_design(bounds=bounds_tensor, transformer=build_transformer(ExperimentConfig), **kwargs)
+
+
+def test_rejection_stops_after_enough_points_and_accepts_boundary(bounds_tensor):
+    calls = []
+
+    def feasible(samples):
+        calls.append(len(samples))
+        return torch.zeros(len(samples))
+
+    result = generate_initial_design(
+        4, bounds_tensor, build_transformer(ExperimentConfig), design_strategy="rejection",
+        constraint_callable=feasible, oversampling_factor=2,
+    )
+    assert result.shape == (4, N_PARAMS)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("accepted", [0, 1])
+def test_rejection_raises_instead_of_returning_short_design(bounds_tensor, accepted):
+    calls = 0
+
+    def scarce(samples):
+        nonlocal calls
+        result = torch.full((len(samples),), -1.0)
+        if calls == 0:
+            result[:accepted] = 1.0
+        calls += 1
+        return result
+
+    with pytest.raises(RuntimeError, match=f"only {accepted} feasible samples"):
+        generate_initial_design(
+            4, bounds_tensor, build_transformer(ExperimentConfig), design_strategy="rejection",
+            constraint_callable=scarce, oversampling_factor=1,
+        )

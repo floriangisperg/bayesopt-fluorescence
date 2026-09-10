@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate initial experimental design using Latin Hypercube Sampling.
+Generate a space-filling initial experimental design.
 
 This script creates the initial set of experiments for the Bayesian optimization
-loop using space-filling Latin Hypercube Sampling with maximin criterion
-optimization and physical constraints.
+loop using feasible-region coverage selection, or LHS without constraints.
 """
 
 import argparse
@@ -39,18 +38,20 @@ def main():
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed for reproducibility')
     parser.add_argument('--n_candidates', type=int, default=100,
-                       help='Number of candidate designs for maximin optimization')
+                       help='Number of coverage starts or conditional LHD candidate designs')
     parser.add_argument('--no_maximin', action='store_true',
-                       help='Disable maximin criterion optimization')
+                       help='Disable design selection; use raw feasible Sobol points or plain LHS')
+    parser.add_argument('--design_strategy', choices=['feasible_coverage', 'constrained_lhd'],
+                       default='feasible_coverage', help='Initial strategy when the urea constraint is enabled')
 
     args = parser.parse_args()
 
     logger.info(f"Generating initial design with {args.n_samples} samples")
     logger.info(f"Random seed: {args.seed}")
     if not args.no_maximin:
-        logger.info(f"Using maximin criterion with {args.n_candidates} candidates")
+        logger.info(f"Using design selection with {args.n_candidates} starts/candidates")
     else:
-        logger.info("Maximin criterion disabled")
+        logger.info("Design selection disabled")
 
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -66,7 +67,7 @@ def main():
     design_strategy = "lhs"
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        design_strategy = "constrained_lhd"
+        design_strategy = args.design_strategy
 
     # Generate initial design
     samples = generate_initial_design(

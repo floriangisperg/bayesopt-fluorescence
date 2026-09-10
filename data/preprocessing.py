@@ -69,6 +69,10 @@ def validate_experiment_data(df: pd.DataFrame,
             rows,
         )
 
+    from analysis.database import validate_experimental_dataframe
+
+    validate_experimental_dataframe(df, parameter_names, objective_names, require_objectives=True)
+
 
 def standardize_objectives(y: np.ndarray) -> Tuple[torch.Tensor, List[StandardScaler]]:
     """Standardize objective values to zero mean and unit variance.

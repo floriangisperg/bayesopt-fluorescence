@@ -5,12 +5,15 @@ the stored fingerprint of training data and configuration is the only guard
 against pairing stale hyperparameters with a different problem.
 """
 
+import gpytorch
 import numpy as np
 import pytest
 import torch
 
 from config import ExperimentConfig, ModelConfig
+from data.preprocessing import save_scalers, standardize_objectives
 from models import GPModel, fit_gp_model, load_gp_model, save_gp_model
+from run_optimization import load_trained_models
 
 
 @pytest.fixture(scope="module")
@@ -98,3 +101,24 @@ def test_legacy_checkpoint_without_fingerprint_loads(tmp_path, fitted_model, tin
     )
     loaded, _ = load_gp_model(legacy_path, GPModel, train_x, train_y.reshape(-1, 1), 0)
     assert not loaded.training
+
+
+@pytest.mark.parametrize("scale,offset", [(1.0, 0.0), (1.0, 16.0), (2.0, 0.0)])
+def test_loader_checks_raw_objective_scaling(tmp_path, scale, offset):
+    train_x = torch.linspace(0, 1, 20, dtype=torch.float64).reshape(4, 5)
+    raw_y = np.array([[0., 0.], [1., 2.], [2., 4.], [3., 6.]])
+    original_y, original_scalers = standardize_objectives(raw_y)
+    current_y, current_scalers = standardize_objectives(raw_y * scale + offset)
+    # The old target hash cannot distinguish these measurement changes.
+    assert torch.equal(original_y, current_y)
+    for i in range(2):
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        model = GPModel(train_x, original_y[:, i], likelihood)
+        save_gp_model(model, likelihood, str(tmp_path / f"model_{i+1}_test.pth"))
+        save_scalers([original_scalers[i]], str(tmp_path / f"scaler_{i+1}_test.pkl"))
+    if scale == 1 and offset == 0:
+        model, _ = load_trained_models(str(tmp_path), train_x, current_y, current_scalers)
+        assert len(model.models) == 2
+    else:
+        with pytest.raises(ValueError, match="scaler does not match"):
+            load_trained_models(str(tmp_path), train_x, current_y, current_scalers)

@@ -152,6 +152,8 @@ def assert_urea_feasible(samples: Union[np.ndarray, torch.Tensor],
     X = samples.cpu().detach().numpy() if isinstance(samples, torch.Tensor) else np.asarray(samples)
     if X.ndim == 1:
         X = X[None, :]
+    if not np.isfinite(X).all():
+        raise ValueError("Samples must contain only finite parameter values")
 
     final_urea = X[:, urea_idx]
     dilution_factor = X[:, dilution_idx]
@@ -204,7 +206,7 @@ def urea_constraint_callable(samples: torch.Tensor,
     """Constraint callable for rejection sampling in physical units.
 
     Returns ``final_urea * dilution_factor - solubilization_urea`` so that
-    feasible samples satisfy ``callable(x) > 0``. Used by the constraint-aware
+    feasible samples satisfy ``callable(x) >= 0``. Used by the constraint-aware
     initial design; the acquisition optimizer uses the linear form from
     ``get_urea_linear_constraint`` instead.
 

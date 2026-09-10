@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
+import pytest
 
+from analysis.database import add_experiment_ids
 from analysis.pareto import (
     auto_reference_point,
     compute_hypervolume_2d,
@@ -48,3 +50,22 @@ def test_auto_reference_point_is_below_observations():
     ref = auto_reference_point(values, ["maximize", "maximize"], margin_fraction=0.25)
 
     assert np.all(ref < values.min(axis=0))
+
+
+def test_experiment_ids_unique_across_batches_and_preserved():
+    batch = pd.DataFrame({"x": [1, 2]})
+    first = add_experiment_ids(batch)
+    second = add_experiment_ids(batch)
+    assert pd.concat([first, second])["Experiment ID"].is_unique
+    pd.testing.assert_frame_equal(add_experiment_ids(first), first)
+    assert "Experiment ID" not in batch
+
+
+def test_missing_ids_filled_and_duplicate_ids_rejected():
+    frame = pd.DataFrame({"Experiment ID": ["old", None, ""]})
+    result = add_experiment_ids(frame)
+    assert result["Experiment ID"].iloc[0] == "old"
+    assert result["Experiment ID"].notna().all()
+    assert result["Experiment ID"].is_unique
+    with pytest.raises(ValueError, match="Duplicate Experiment ID"):
+        add_experiment_ids(pd.DataFrame({"Experiment ID": ["old", "old"]}))

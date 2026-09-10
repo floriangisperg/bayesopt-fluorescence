@@ -38,8 +38,9 @@ Arguments:
 | `--output_dir`   | `results`        | Output directory              |
 | `--project_name` | `initial_design` | Base name for the output file |
 | `--seed`         | 42               | Random seed                   |
-| `--n_candidates` | 100              | Candidate designs for maximin |
-| `--no_maximin`   | False            | Disable maximin selection     |
+| `--n_candidates` | 100              | Coverage starts (or LHD candidate designs) |
+| `--no_maximin`   | False            | Skip coverage/maximin selection |
+| `--design_strategy` | feasible_coverage | Constrained strategy; `constrained_lhd` restores the previous method |
 
 Output:
 
@@ -47,7 +48,7 @@ Output:
 
 Notes:
 
-- If the urea constraint is enabled, this step uses a constraint-aware Latin hypercube design.
+- If the urea constraint is enabled, this step selects experiments from a feasible Sobol pool to reduce the largest unsampled gaps in normalized user space. This is a joint-coverage design, not a strict Latin hypercube. Without the constraint, it uses LHS.
 - The generated spreadsheet contains parameter columns and empty objective columns to be filled after experiments.
 
 ## Step 2: Run Experiments and Enter Results

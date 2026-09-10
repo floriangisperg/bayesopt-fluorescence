@@ -61,13 +61,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_trained_models(model_dir: str, train_x: torch.Tensor, train_y: torch.Tensor):
+def load_trained_models(model_dir: str, train_x: torch.Tensor, train_y: torch.Tensor,
+                        expected_scalers=None):
     """Load previously trained GP models.
 
     Args:
         model_dir: Directory containing saved models.
         train_x: Training inputs (for model reconstruction).
         train_y: Training outputs (for model reconstruction).
+        expected_scalers: Scalers fitted to the current raw measurements, used
+            to detect shifts or rescaling hidden by standardized-target hashes.
 
     Returns:
         Tuple of (ModelListGP, list of scalers).
@@ -83,6 +86,9 @@ def load_trained_models(model_dir: str, train_x: torch.Tensor, train_y: torch.Te
         [f for f in os.listdir(model_dir) if f.endswith('.pkl')]
     )
 
+    if len(model_files) != train_y.shape[1] or len(scaler_files) != train_y.shape[1]:
+        raise ValueError("Expected exactly one model and scaler per objective; retrain in a clean directory.")
+
     for i, model_file in enumerate(model_files):
         model_path = os.path.join(model_dir, model_file)
         model, _ = load_gp_model(model_path, GPModel, train_x, train_y, i)
@@ -92,6 +98,18 @@ def load_trained_models(model_dir: str, train_x: torch.Tensor, train_y: torch.Te
         scaler_path = os.path.join(model_dir, scaler_file)
         scaler = load_scalers(scaler_path)[0]
         scalers.append(scaler)
+
+    # Standardization erases affine changes to raw measurements. Check its
+    # fitted state too, including for checkpoints created before this guard.
+    if expected_scalers is not None:
+        if len(expected_scalers) != len(scalers):
+            raise ValueError("Objective scaler count differs; retrain the models.")
+        for i, (saved, current) in enumerate(zip(scalers, expected_scalers)):
+            if any(not np.array_equal(getattr(saved, attr), getattr(current, attr))
+                   for attr in ("mean_", "scale_", "var_", "n_samples_seen_")):
+                raise ValueError(
+                    f"Objective {i + 1} scaler does not match the current measurements. Retrain the models."
+                )
 
     # Create ModelListGP for multi-objective optimization
     multi_model = ModelListGP(*models)
@@ -156,6 +174,8 @@ def main():
         dropped = int((~complete_mask).sum())
         logger.warning(f"Ignoring {dropped} rows without complete objective values")
     completed_df = df.loc[complete_mask].copy()
+    if completed_df.empty:
+        raise ValueError("At least one completed experiment is required for optimization")
     X_raw = completed_df[ExperimentConfig.PARAMETER_NAMES].to_numpy()
     y_raw = completed_df[ExperimentConfig.OBJECTIVE_NAMES].to_numpy()
 
@@ -167,7 +187,9 @@ def main():
 
     # Load trained models
     logger.info("Loading trained models...")
-    multi_model, model_scalers = load_trained_models(args.model_dir, train_x_normalized, train_y_standardized)
+    multi_model, model_scalers = load_trained_models(
+        args.model_dir, train_x_normalized, train_y_standardized, expected_scalers=scalers
+    )
 
     # Reference point for the hypervolume: either the configured real-space
     # point mapped into standardized space, or derived from the observed data

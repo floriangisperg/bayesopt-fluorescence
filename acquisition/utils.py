@@ -16,6 +16,12 @@ from data.transformation import ParameterTransformer
 logger = logging.getLogger(__name__)
 
 
+def _validate_design_counts(**counts):
+    for name, value in counts.items():
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+
+
 def update_experimental_database(new_experiments: pd.DataFrame,
                               iteration: int, path: str) -> pd.DataFrame:
     """Update experimental database with new experiments.
@@ -89,6 +95,8 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: 
     from scipy.spatial.distance import pdist
     from scipy.stats import qmc
 
+    _validate_design_counts(n_samples=n_samples, n_candidates=n_candidates)
+    use_maximin = use_maximin and n_samples > 1
     rng = np.random.default_rng(seed)
     n_dims = bounds.shape[1]
 
@@ -171,7 +179,7 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: 
     if use_maximin:
         logger.info(f"Optimizing constrained LHD using maximin criterion with {n_candidates} candidates")
 
-        best_min_dist = 0
+        best_min_dist = -np.inf
         best_samples = None
 
         for _ in range(n_candidates):
@@ -194,6 +202,93 @@ def generate_constrained_lhd(n_samples: int, bounds: torch.Tensor, transformer: 
     return samples
 
 
+def generate_feasible_coverage(n_samples, bounds, transformer, dilution_idx, urea_idx,
+                              solubilization_urea=8.0, seed=42, n_candidates=100,
+                              use_maximin=True):
+    """Cover the feasible urea region in normalized user-space coordinates.
+
+    Filter scrambled Sobol pools by physical feasibility, avoiding the unequal
+    feasible-volume weighting of conditional LHD. Each greedy design adds the
+    pool point farthest from its existing experiments. Among seeded starts,
+    refine cluster centers onto feasible pool points, and retain the design
+    with the smallest maximum pool-to-design distance (then mean squared
+    distance). This is a finite-pool coverage heuristic, not a
+    globally optimal design or a strict Latin hypercube. Selected points need
+    not be uniformly distributed and may favor boundaries.
+
+    n_candidates controls greedy starts. With use_maximin=False, return the
+    first n_samples feasible pool points without coverage selection.
+    """
+    from scipy.spatial.distance import cdist
+    from scipy.stats import qmc
+
+    _validate_design_counts(n_samples=n_samples, n_candidates=n_candidates)
+    box = bounds.detach().cpu().numpy() if torch.is_tensor(bounds) else np.asarray(bounds)
+    if not np.array_equal(box, transformer.get_physical_bounds()):
+        raise ValueError("Design bounds must match the parameter transformer")
+    if dilution_idx == urea_idx or not all(0 <= i < box.shape[1] for i in (dilution_idx, urea_idx)):
+        raise ValueError("Distinct valid dilution and urea indices are required")
+    if (not np.isfinite(solubilization_urea) or solubilization_urea < 0
+            or box[0, dilution_idx] <= 1 or box[0, urea_idx] < 0):
+        raise ValueError("Urea coverage requires nonnegative urea and dilution factors greater than one")
+    if box[1, dilution_idx] * box[1, urea_idx] <= solubilization_urea:
+        raise ValueError("The urea constraint has no positive-volume feasible region within the bounds")
+
+    pool_target = max(2048, 64 * n_samples)
+    exponent = int(np.ceil(np.log2(pool_target)))
+    rng = np.random.default_rng(seed)
+    chunks = []
+    accepted = 0
+    for _ in range(100):
+        sampler = qmc.Sobol(d=box.shape[1], scramble=True, seed=int(rng.integers(2**31)))
+        unit = sampler.random_base2(exponent)
+        physical = transformer.unit_to_physical_user(unit)
+        feasible = physical[:, dilution_idx] * physical[:, urea_idx] >= solubilization_urea
+        chunks.append(unit[feasible])
+        accepted += int(feasible.sum())
+        if accepted >= pool_target:
+            break
+    if accepted < pool_target:
+        raise RuntimeError(
+            f"Only {accepted} feasible pool points found; need {pool_target} for coverage selection. "
+            "The feasible region may be too narrow; use constrained_lhd or revise the bounds."
+        )
+    pool = np.vstack(chunks)[:pool_target]
+    if not use_maximin:
+        return transformer.unit_to_physical_user(pool[:n_samples], as_tensor=True)
+
+    best_score = (np.inf, np.inf)
+    best_indices = None
+    starts = rng.choice(len(pool), size=min(n_candidates, len(pool)), replace=False)
+    for start in starts:
+        indices = [int(start)]
+        distances = np.sum((pool - pool[start]) ** 2, axis=1)
+        for _ in range(1, n_samples):
+            next_index = int(np.argmax(distances))
+            indices.append(next_index)
+            distances = np.minimum(distances, np.sum((pool - pool[next_index]) ** 2, axis=1))
+        score = (float(distances.max()), float(distances.mean()))
+        if score < best_score:
+            best_score, best_indices = score, indices
+        # Farthest-point selection tends toward edges. Relocate each cluster's
+        # center to its nearest feasible pool point to also cover the interior.
+        # Keep the greedy design as an option if refinement worsens coverage.
+        for _ in range(5):
+            labels = cdist(pool, pool[indices], metric="sqeuclidean").argmin(axis=1)
+            centers = np.array([pool[labels == i].mean(axis=0) for i in range(n_samples)])
+            refined = cdist(centers, pool, metric="sqeuclidean").argmin(axis=1).tolist()
+            if len(set(refined)) != n_samples or refined == indices:
+                break
+            indices = refined
+            nearest = cdist(pool, pool[indices], metric="sqeuclidean").min(axis=1)
+            score = (float(nearest.max()), float(nearest.mean()))
+            if score < best_score:
+                best_score, best_indices = score, indices
+    logger.info("Feasible coverage: %d pool points, estimated covering radius %.4f in user-unit space",
+                len(pool), np.sqrt(best_score[0]))
+    return transformer.unit_to_physical_user(pool[best_indices], as_tensor=True)
+
+
 def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: ParameterTransformer,
                           seed: int = 42,
                           n_candidates: int = 100,
@@ -204,23 +299,25 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
                           solubilization_urea: float = 8.0,
                           dilution_idx: int = None,
                           urea_idx: int = None)-> torch.Tensor:
-    """Generate initial experimental design using Latin Hypercube Sampling.
+    """Generate an initial design with explicit sampling and constraint strategy.
 
     Args:
         n_samples: Number of initial samples to generate.
         bounds: Parameter bounds (2 x d tensor).
         transformer: Parameter transformer object.
         seed: Random seed for reproducibility.
-        n_candidates: Number of candidate designs to evaluate for maximin criterion.
-        use_maximin: Whether to apply maximin criterion optimization.
+        n_candidates: Number of candidate LHD designs or feasible-coverage starts.
+        use_maximin: Whether to apply design selection (coverage or maximin).
         design_strategy: How to respect constraints:
+                        - "feasible_coverage": Sobol feasible pool and greedy
+                          coverage selection in normalized user space.
                         - "lhs": plain Latin hypercube over the full box.
                         - "constrained_lhd": specialized design for the urea
                           dilution constraint that preserves stratification.
                         - "rejection": sample the full box and keep only points
-                          with positive ``constraint_callable`` values.
+                          with nonnegative ``constraint_callable`` values.
         constraint_callable: Callable that takes a tensor of physical user-unit
-                        samples and returns positive values for feasible
+                        samples and returns nonnegative values for feasible
                         samples. Required for the "rejection" strategy;
                         ignored otherwise.
         oversampling_factor: Factor by which to oversample when using rejection sampling.
@@ -240,10 +337,14 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
     from scipy.spatial.distance import pdist
     from scipy.stats import qmc
 
-    if design_strategy not in ("lhs", "constrained_lhd", "rejection"):
+    _validate_design_counts(
+        n_samples=n_samples, n_candidates=n_candidates, oversampling_factor=oversampling_factor
+    )
+    use_maximin = use_maximin and n_samples > 1
+    if design_strategy not in ("lhs", "constrained_lhd", "rejection", "feasible_coverage"):
         raise ValueError(
             f"Unknown design_strategy {design_strategy!r}; expected 'lhs', "
-            "'constrained_lhd', or 'rejection'."
+            "'constrained_lhd', 'feasible_coverage', or 'rejection'."
         )
     if design_strategy == "lhs" and constraint_callable is not None:
         raise ValueError(
@@ -253,6 +354,16 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
         )
     if design_strategy == "rejection" and constraint_callable is None:
         raise ValueError("design_strategy='rejection' requires a constraint_callable.")
+
+    if design_strategy == "feasible_coverage":
+        if constraint_callable is not None:
+            raise ValueError("feasible_coverage uses the explicit urea parameters, not a constraint_callable")
+        return generate_feasible_coverage(
+            n_samples, bounds, transformer,
+            ConstraintConfig.DILUTION_FACTOR_IDX if dilution_idx is None else dilution_idx,
+            ConstraintConfig.FINAL_UREA_IDX if urea_idx is None else urea_idx,
+            solubilization_urea, seed, n_candidates, use_maximin,
+        )
 
     if design_strategy == "constrained_lhd":
         # Use constrained LHD that maintains stratification
@@ -285,10 +396,11 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
 
         n_total_needed = n_samples * oversampling_factor
         all_samples_unit = []
+        n_accepted = 0
         attempts = 0
         max_attempts = 100
 
-        while len(all_samples_unit) < n_total_needed and attempts < max_attempts:
+        while n_accepted < n_total_needed and attempts < max_attempts:
             # Generate batch of samples
             batch_size = min(n_total_needed * 2, 10000)
             batch_samples = sampler.random(n=batch_size)
@@ -298,11 +410,12 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
 
             # Check constraint satisfaction
             constraint_values = constraint_callable(batch_tensor)
-            feasible_mask = constraint_values > 0
+            feasible_mask = torch.isfinite(constraint_values) & (constraint_values >= 0)
 
             # Keep feasible samples (in unit space)
             feasible_samples_unit = batch_samples[feasible_mask.cpu().numpy()]
             all_samples_unit.append(feasible_samples_unit)
+            n_accepted += len(feasible_samples_unit)
 
             attempts += 1
             if attempts % 20 == 0:
@@ -311,8 +424,11 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
                     f"samples after {attempts} attempts"
                 )
 
-        if len(all_samples_unit) == 0:
-            raise RuntimeError("Could not find any feasible samples satisfying the constraint!")
+        if n_accepted < n_samples:
+            raise RuntimeError(
+                f"Found only {n_accepted} feasible samples after {attempts} attempts; "
+                f"requested {n_samples}."
+            )
 
         # Combine all feasible samples
         all_samples_unit = np.vstack(all_samples_unit)
@@ -324,7 +440,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
 
             # Seeded so the whole design is reproducible from `seed`
             subset_rng = np.random.default_rng(seed)
-            best_min_dist = 0
+            best_min_dist = -np.inf
             best_indices = None
 
             for _ in range(n_candidates):
@@ -351,7 +467,7 @@ def generate_initial_design(n_samples: int, bounds: torch.Tensor, transformer: P
         # Original maximin optimization without constraints
         logger.info(f"Optimizing design using maximin criterion with {n_candidates} candidates")
 
-        best_min_dist = 0
+        best_min_dist = -np.inf
         best_samples_unit = None
 
         for i in range(n_candidates):

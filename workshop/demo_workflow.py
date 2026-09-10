@@ -122,7 +122,7 @@ def generate_initial_design_with_mock_results(
     """Generate initial design and add mock experimental results."""
     logger.info(f"=== STEP 1: Generating Initial Design ({n_samples} samples) ===")
 
-    # Create output directory (Iteration_0 for initial LHS design)
+    # Create output directory for the initial design
     output_path = Path(output_dir) / "Iteration_0"
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -134,9 +134,9 @@ def generate_initial_design_with_mock_results(
     design_strategy = "lhs"
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         logger.info(f"Urea constraint enabled (solubilization_urea={ConstraintConfig.SOLUBILIZATION_UREA} M)")
-        design_strategy = "constrained_lhd"
+        design_strategy = "feasible_coverage"
 
-    # Generate initial design using LHS
+    # Generate a feasible coverage design (plain LHS if unconstrained)
     samples = generate_initial_design(
         n_samples=n_samples,
         bounds=bounds,
@@ -148,7 +148,7 @@ def generate_initial_design_with_mock_results(
         solubilization_urea=ConstraintConfig.SOLUBILIZATION_UREA
     )
 
-    # The constrained LHD samples are feasible by construction; validate loudly
+    # The selected samples are feasible by construction; validate loudly
     # rather than repairing silently.
     if ConstraintConfig.ENABLE_UREA_CONSTRAINT:
         assert_urea_feasible(samples.numpy())
